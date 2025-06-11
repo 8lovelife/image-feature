@@ -114,14 +114,14 @@ export default function CLIPTeachingWebsite() {
             {/* <div className="flex-1"> */}
             <ResizablePanelGroup direction="horizontal" className="flex h-full w-full rounded-lg border">
                 {/* Left Panel */}
-                <ResizablePanel defaultSize={10} minSize={10} maxSize={15}>
+                <ResizablePanel defaultSize={20} minSize={20} maxSize={25}>
                     <LeftPanel onImageSelect={handleImageSelect} />
                 </ResizablePanel>
 
                 <ResizableHandle withHandle />
 
                 {/* Middle Panel */}
-                <ResizablePanel defaultSize={15} minSize={27} maxSize={30}>
+                <ResizablePanel defaultSize={30} minSize={30} maxSize={35}>
                     <MiddlePanel
                         selectedImages={selectedImages}
                         currentFeatureType={currentFeatureType}
@@ -135,7 +135,7 @@ export default function CLIPTeachingWebsite() {
 
 
                 {/* Right Panel */}
-                <ResizablePanel defaultSize={30} minSize={35}>
+                <ResizablePanel defaultSize={50} minSize={35} maxSize={70}>
                     <RightPanel selectedImages={selectedImages} currentFeatureType={currentFeatureType} />
                 </ResizablePanel>
             </ResizablePanelGroup>

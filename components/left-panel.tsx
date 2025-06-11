@@ -81,7 +81,7 @@ export default function LeftPanel({ onImageSelect }: LeftPanelProps) {
                 {/* CardContent will take remaining space and allow ScrollArea to be 100% of that */}
                 <CardContent className="flex-grow overflow-y-auto p-2 md:p-4"> {/* flex-grow and overflow-y-auto (ScrollArea handles its own scroll) */}
                     <ScrollArea className="h-full w-full"> {/* h-full and w-full to fill CardContent */}
-                        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-2 gap-2 md:gap-2">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 md:gap-3">
                             {exampleImages.map((image) => (
                                 <div
                                     key={image.id}
@@ -96,7 +96,7 @@ export default function LeftPanel({ onImageSelect }: LeftPanelProps) {
                                             src={image.src} // Removed query params, assuming images are pre-sized or Next/Image handles it
                                             alt={image.alt}
                                             fill // Use fill to make image cover the AspectRatio container
-                                            sizes="(max-width: 768px) 50vw, (max-width: 1200px) 33vw, 25vw" // Adjust sizes for better optimization
+                                            sizes="(max-width: 640px) 100vw, (max-width: 768px) 50vw, (max-width: 1200px) 33vw, 25vw"
                                             className="object-cover group-hover:scale-105 transition-transform duration-300"
                                         />
                                         <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-2">
