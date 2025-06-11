@@ -131,203 +131,220 @@ export default function MiddlePanel({
     const currentFeature = featureOptions.find((f) => f.value === currentFeatureType)
 
     return (
-        <div className="h-full p-2 md:p-4 flex flex-col">
-            <div className="flex flex-col space-y-3 md:space-y-4 h-full">
-                {/* Feature Extraction Settings */}
-                <Card className="flex-shrink-0">
-                    <CardHeader>
-                        <CardTitle className="flex items-center gap-2">
-                            <Settings className="h-5 w-5" />
-                            Image Feature Extraction Methods
+        <div className="h-full flex flex-col">
+            {/* 响应式的特征提取设置区域 */}
+            <div className="flex-shrink-0 p-2 sm:p-3 lg:p-4 border-b">
+                <Card>
+                    <CardHeader className="pb-2 sm:pb-3">
+                        <CardTitle className="flex items-center gap-2 text-sm sm:text-base">
+                            <Settings className="h-3 w-3 sm:h-4 sm:w-4" />
+                            <span className="truncate">Feature Extraction</span>
+                            <span className="hidden sm:inline">Methods</span>
                         </CardTitle>
                     </CardHeader>
-                    <CardContent>
-                        <div className="space-y-3">
-                            <div className="flex items-center justify-between gap-2">
-                                <Select value={currentFeatureType} onValueChange={onFeatureTypeChange}>
-                                    <SelectTrigger>
-                                        <SelectValue placeholder="Select feature extraction method" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <div className="p-2">
-                                            <div className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1">
-                                                <Brain className="h-3 w-3" />
-                                                Deep Learning
-                                            </div>
-                                            {featureOptions
-                                                .filter((option) => option.category === "Machine Learning")
-                                                .map((option) => (
-                                                    <SelectItem key={option.value} value={option.value}>
-                                                        <div className="flex items-center gap-2">
-                                                            <option.icon className="h-4 w-4" />
-                                                            <span>{option.label}</span>
-                                                            <Badge variant="outline" className="text-xs">
-                                                                {option.license}
-                                                            </Badge>
-                                                        </div>
-                                                    </SelectItem>
-                                                ))}
+                    <CardContent className="pt-0 space-y-2 sm:space-y-3">
+                        {/* 主要控制区域 */}
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                            <Select value={currentFeatureType} onValueChange={onFeatureTypeChange}>
+                                <SelectTrigger className="w-full sm:flex-1">
+                                    <SelectValue placeholder="Select method" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <div className="p-2">
+                                        <div className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1">
+                                            <Brain className="h-3 w-3" />
+                                            Deep Learning
                                         </div>
-                                        <div className="p-2">
-                                            <div className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1">
-                                                <Cpu className="h-3 w-3" />
-                                                Traditional Computer Vision
-                                            </div>
-                                            {featureOptions
-                                                .filter((option) => option.category === "Traditional")
-                                                .map((option) => (
-                                                    <SelectItem key={option.value} value={option.value}>
-                                                        <div className="flex items-center gap-2">
-                                                            <option.icon className="h-4 w-4" />
-                                                            <span>{option.label}</span>
-                                                            <Badge variant="outline" className="text-xs">
-                                                                {option.license}
-                                                            </Badge>
-                                                        </div>
-                                                    </SelectItem>
-                                                ))}
+                                        {featureOptions
+                                            .filter((option) => option.category === "Machine Learning")
+                                            .map((option) => (
+                                                <SelectItem key={option.value} value={option.value}>
+                                                    <div className="flex items-center gap-2">
+                                                        <option.icon className="h-4 w-4" />
+                                                        <span>{option.label}</span>
+                                                        <Badge variant="outline" className="text-xs">
+                                                            {option.license}
+                                                        </Badge>
+                                                    </div>
+                                                </SelectItem>
+                                            ))}
+                                    </div>
+                                    <div className="p-2">
+                                        <div className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1">
+                                            <Cpu className="h-3 w-3" />
+                                            Traditional CV
                                         </div>
-                                    </SelectContent>
-                                </Select>
+                                        {featureOptions
+                                            .filter((option) => option.category === "Traditional")
+                                            .map((option) => (
+                                                <SelectItem key={option.value} value={option.value}>
+                                                    <div className="flex items-center gap-2">
+                                                        <option.icon className="h-4 w-4" />
+                                                        <span>{option.label}</span>
+                                                        <Badge variant="outline" className="text-xs">
+                                                            {option.license}
+                                                        </Badge>
+                                                    </div>
+                                                </SelectItem>
+                                            ))}
+                                    </div>
+                                </SelectContent>
+                            </Select>
 
-                                <Button variant="outline" size="sm" className="text-xs h-7 lg:h-8 px-2 lg:px-3" asChild>
-                                    <a href={currentFeature?.repository} target="_blank" rel="noopener noreferrer" className="flex items-center">
-                                        <ExternalLink className="h-3 w-3 lg:h-3.5 lg:w-3.5 mr-1 lg:mr-1.5" />
-                                        Repo
-                                    </a>
-                                </Button>
-                            </div>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                className="text-xs h-8 px-2 sm:px-3 flex-shrink-0 w-full sm:w-auto"
+                                asChild
+                            >
+                                <a href={currentFeature?.repository} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center">
+                                    <ExternalLink className="h-3 w-3 mr-1" />
+                                    <span>Repository</span>
+                                </a>
+                            </Button>
+                        </div>
 
-                            {currentFeature && (
-                                <div className="flex items-center gap-2 flex-wrap">
-                                    <div className="space-y-1 text-xs text-muted-foreground mb-3 lg:mb-4">
-                                        <p className="text-sm text-muted-foreground leading-relaxed">
-                                            {currentFeature.description}
-                                        </p>
-                                        <p><strong>Vector Dimensions:</strong> {currentFeature.dimensions}</p>
-                                        <p><strong>Reference Paper:</strong> {currentFeature.paper}</p>
+                        {/* 详细信息区域 - 可折叠显示 */}
+                        {currentFeature && (
+                            <div className="space-y-1 text-xs text-muted-foreground">
+                                <p className="text-xs sm:text-sm text-foreground leading-relaxed">
+                                    {currentFeature.description}
+                                </p>
+                                <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4">
+                                    <div className="flex items-center gap-1">
+                                        <strong className="text-foreground">Dimensions:</strong>
+                                        <Badge variant="secondary" className="text-xs">
+                                            {currentFeature.dimensions}
+                                        </Badge>
+                                    </div>
+                                    <div className="hidden lg:flex items-center gap-1 min-w-0">
+                                        <strong className="text-foreground flex-shrink-0">Paper:</strong>
+                                        <span className="truncate text-xs">{currentFeature.paper}</span>
                                     </div>
                                 </div>
-                            )}
-                        </div>
+                                {/* 在小屏幕上显示简化的论文信息 */}
+                                <div className="lg:hidden">
+                                    <div className="flex items-start gap-1">
+                                        <strong className="text-foreground flex-shrink-0">Paper:</strong>
+                                        <span className="text-xs leading-tight">{currentFeature.paper}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </CardContent>
                 </Card>
+            </div>
 
-                {/* Selected Images */}
-                <Card className="flex-shrink-0">
-                    <CardHeader>
-                        <CardTitle>Selected Images ({selectedImages.length})</CardTitle>
-                    </CardHeader>
-                    <CardContent>
-                        <ScrollArea className="h-58">
-                            {selectedImages.length === 0 ? (
-                                <div className="text-center text-muted-foreground py-8">
-                                    <ImageIcon className="h-12 w-12 mx-auto mb-2 opacity-50" />
-                                    <p>Please select images from the left panel</p>
-                                </div>
-                            ) : (
-                                <div className="grid grid-cols-3 gap-3">
-                                    {selectedImages.map((image, index) => (
-                                        <div key={image.id} className="relative group">
-                                            <Image
-                                                src={image.src || "/placeholder.svg"}
-                                                alt={image.alt}
-                                                width={120}
-                                                height={120}
-                                                className="w-full h-24 object-cover rounded-lg"
-                                            />
-                                            <Button
-                                                variant="destructive"
-                                                size="sm"
-                                                className="absolute -top-2 -right-2 h-6 w-6 rounded-full p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                                                onClick={() => onRemoveImage(image.id)}
-                                            >
-                                                ×
-                                            </Button>
-                                            <div className="absolute bottom-1 left-1">
-                                                <Badge variant="outline" className="text-xs bg-background/80">
-                                                    #{index + 1}
-                                                </Badge>
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </ScrollArea>
-                    </CardContent>
-                </Card>
-
-                {/* Similarity Results */}
-                <Card className="flex-1 flex flex-col min-h-0">
-                    <CardHeader>
-                        <div className="flex items-center gap-2">
-                            <CardTitle>Image-To-Image Similarities</CardTitle>
-                            <Badge variant="outline" className="text-xs">
-                                {currentFeature?.label}
-                            </Badge>
-                        </div>
-                    </CardHeader>
-                    <CardContent className="flex-1 min-h-0">
-                        <ScrollArea className="h-full w-full">
-                            <div className="space-y-4">
-                                {/* Image-to-Image Similarities */}
-                                {selectedImages.length > 1 && imageImageSimilarities.length > 0 ? (
-                                    <div>
-                                        {/* <h4 className="font-medium mb-3 flex items-center gap-2">
-                                            Image-to-Image Similarities
-                                            <Badge variant="outline" className="text-xs">
-                                                {currentFeature?.label}
-                                            </Badge>
-                                        </h4> */}
-                                        <div className="space-y-2">
-                                            {selectedImages.map((imageA, i) => (
-                                                <div key={`row-${i}`} className="space-y-1">
-                                                    {selectedImages.map((imageB, j) => {
-                                                        if (i >= j) return null
-                                                        if (!imageImageSimilarities[i] || imageImageSimilarities[i][j] === undefined) return null
-                                                        return (
-                                                            <div key={`${i}-${j}`} className="flex items-center gap-3 text-sm">
-                                                                <div className="flex items-center gap-2 min-w-0 flex-1">
-                                                                    <Image
-                                                                        src={imageA.src || "/placeholder.svg"}
-                                                                        alt={imageA.alt}
-                                                                        width={34}
-                                                                        height={34}
-                                                                        className="rounded"
-                                                                    />
-                                                                    <span className="text-xs">#{i + 1}</span>
-                                                                    <span className="text-xs">↔</span>
-                                                                    <span className="text-xs">#{j + 1}</span>
-                                                                    <Image
-                                                                        src={imageB.src || "/placeholder.svg"}
-                                                                        alt={imageB.alt}
-                                                                        width={34}
-                                                                        height={34}
-                                                                        className="rounded"
-                                                                    />
-                                                                </div>
-                                                                <div className="flex items-center gap-2 min-w-[120px]">
-                                                                    <Progress value={imageImageSimilarities[i][j] * 100} className="h-2 flex-1" />
-                                                                    <span className="font-mono text-xs min-w-[45px]">
-                                                                        {(imageImageSimilarities[i][j] * 100).toFixed(1)}%
-                                                                    </span>
-                                                                </div>
-                                                            </div>
-                                                        )
-                                                    })}
-                                                </div>
-                                            ))}
-                                        </div>
+            <div className="flex-1 min-h-0">
+                <ScrollArea className="h-full">
+                    <div className="p-2 sm:p-3 lg:p-4 space-y-3 sm:space-y-4">
+                        {/* Selected Images */}
+                        <Card>
+                            <CardHeader className="pb-2 sm:pb-3">
+                                <CardTitle className="text-sm sm:text-base">
+                                    Selected Images ({selectedImages.length})
+                                </CardTitle>
+                            </CardHeader>
+                            <CardContent className="pt-0">
+                                {selectedImages.length === 0 ? (
+                                    <div className="text-center text-muted-foreground py-4 sm:py-6">
+                                        <ImageIcon className="h-8 w-8 sm:h-10 sm:w-10 mx-auto mb-2 opacity-50" />
+                                        <p className="text-xs sm:text-sm">Select images from the left panel</p>
                                     </div>
                                 ) : (
-                                    <div className="text-center text-muted-foreground py-4">
-                                        <p>Select 2 or more images to see similarity calculations</p>
+                                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2 sm:gap-3">
+                                        {selectedImages.map((image, index) => (
+                                            <div key={image.id} className="relative group">
+                                                <Image
+                                                    src={image.src || "/placeholder.svg"}
+                                                    alt={image.alt}
+                                                    width={120}
+                                                    height={120}
+                                                    className="w-full h-16 sm:h-20 lg:h-24 object-cover rounded-lg"
+                                                />
+                                                <Button
+                                                    variant="destructive"
+                                                    size="sm"
+                                                    className="absolute -top-1 -right-1 sm:-top-2 sm:-right-2 h-5 w-5 sm:h-6 sm:w-6 rounded-full p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                    onClick={() => onRemoveImage(image.id)}
+                                                >
+                                                    ×
+                                                </Button>
+                                                <div className="absolute bottom-1 left-1">
+                                                    <Badge variant="outline" className="text-xs bg-background/80">
+                                                        #{index + 1}
+                                                    </Badge>
+                                                </div>
+                                            </div>
+                                        ))}
                                     </div>
                                 )}
-                            </div>
-                        </ScrollArea>
-                    </CardContent>
-                </Card>
+                            </CardContent>
+                        </Card>
+
+                        {/* Similarity Results */}
+                        <Card>
+                            <CardHeader className="pb-2 sm:pb-3">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                    <CardTitle className="text-sm sm:text-base">
+                                        <span className="hidden sm:inline">Image-To-Image</span>
+                                        <span className="sm:hidden">Image</span> Similarities
+                                    </CardTitle>
+                                    <Badge variant="outline" className="text-xs">
+                                        {currentFeature?.label}
+                                    </Badge>
+                                </div>
+                            </CardHeader>
+                            <CardContent className="pt-0">
+                                {selectedImages.length > 1 && imageImageSimilarities.length > 0 ? (
+                                    <div className="space-y-2 sm:space-y-3">
+                                        {selectedImages.map((imageA, i) => (
+                                            <div key={`row-${i}`} className="space-y-2">
+                                                {selectedImages.map((imageB, j) => {
+                                                    if (i >= j) return null
+                                                    if (!imageImageSimilarities[i] || imageImageSimilarities[i][j] === undefined) return null
+                                                    return (
+                                                        <div key={`${i}-${j}`} className="flex items-center gap-2 text-sm">
+                                                            <div className="flex items-center gap-1 sm:gap-2 min-w-0 flex-1">
+                                                                <Image
+                                                                    src={imageA.src || "/placeholder.svg"}
+                                                                    alt={imageA.alt}
+                                                                    width={24}
+                                                                    height={24}
+                                                                    className="rounded flex-shrink-0 sm:w-7 sm:h-7"
+                                                                />
+                                                                <span className="text-xs flex-shrink-0">#{i + 1}</span>
+                                                                <span className="text-xs flex-shrink-0">↔</span>
+                                                                <span className="text-xs flex-shrink-0">#{j + 1}</span>
+                                                                <Image
+                                                                    src={imageB.src || "/placeholder.svg"}
+                                                                    alt={imageB.alt}
+                                                                    width={24}
+                                                                    height={24}
+                                                                    className="rounded flex-shrink-0 sm:w-7 sm:h-7"
+                                                                />
+                                                            </div>
+                                                            <div className="flex items-center gap-2 min-w-[80px] sm:min-w-[100px] lg:min-w-[120px] flex-shrink-0">
+                                                                <Progress value={imageImageSimilarities[i][j] * 100} className="h-2 flex-1" />
+                                                                <span className="font-mono text-xs min-w-[35px] sm:min-w-[40px] lg:min-w-[45px] text-right">
+                                                                    {(imageImageSimilarities[i][j] * 100).toFixed(1)}%
+                                                                </span>
+                                                            </div>
+                                                        </div>
+                                                    )
+                                                })}
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="text-center text-muted-foreground py-4 sm:py-6">
+                                        <p className="text-xs sm:text-sm">Select 2+ images to see similarities</p>
+                                    </div>
+                                )}
+                            </CardContent>
+                        </Card>
+                    </div>
+                </ScrollArea>
             </div>
         </div>
     )
