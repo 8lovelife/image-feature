@@ -17,20 +17,44 @@ const DIMENSION_COLORS = [
   { color: "#f97316", lightColor: "#fdba74", label: "V" }, // 橙
 ];
 
-// 相机控制器 - 根据视角模式切换相机位置
-function CameraController({ viewMode }: { viewMode: "3d" | "2d" }) {
+// 相机控制器 - 平滑过渡相机位置
+function CameraController({
+  viewMode,
+  animationProgress,
+}: {
+  viewMode: "3d" | "2d";
+  animationProgress: number;
+}) {
   const { camera } = useThree();
+  const targetPosRef = useRef(new THREE.Vector3(8, 6, 8));
 
-  useEffect(() => {
+  useFrame(() => {
+    // 3D转2D时：先保持斜视角看压扁过程，压扁完成后再转正
+    // 2D转3D时：先转到斜视角，再展开
+
+    let targetPos: THREE.Vector3;
+
     if (viewMode === "2d") {
-      camera.position.set(0, 0, 15);
-      camera.lookAt(0, 0, 0);
+      // 压扁阶段（0-0.7）：保持斜视角，可以看到Z方向的变化
+      // 转正阶段（0.7-1）：转到正面视图
+      if (animationProgress < 0.7) {
+        // 斜视角，稍微调整让Z轴变化更明显
+        targetPos = new THREE.Vector3(6, 4, 10);
+      } else {
+        // 逐渐转到正面
+        const t = (animationProgress - 0.7) / 0.3;
+        targetPos = new THREE.Vector3(6 * (1 - t), 4 * (1 - t), 10 + 5 * t);
+      }
     } else {
-      camera.position.set(8, 6, 8);
-      camera.lookAt(0, 0, 0);
+      // 3D模式
+      targetPos = new THREE.Vector3(8, 6, 8);
     }
+
+    // 平滑过渡
+    camera.position.lerp(targetPos, 0.05);
+    camera.lookAt(0, 0, 0);
     camera.updateProjectionMatrix();
-  }, [viewMode, camera]);
+  });
 
   return null;
 }
@@ -79,7 +103,7 @@ function projectTo3D(
   }
 }
 
-// 动画坐标轴组件
+// 动画坐标轴组件 - 带压扁效果
 function AnimatedAxis({
   axis,
   color,
@@ -95,33 +119,38 @@ function AnimatedAxis({
   highlightDirection: "positive" | "negative" | null;
   scale: number;
 }) {
-  const meshRef = useRef<THREE.Group>(null);
-  const currentScale = useRef(scale);
+  const currentScaleRef = useRef(scale);
+  const [currentScale, setCurrentScale] = useState(scale);
 
   useFrame(() => {
-    if (meshRef.current) {
-      // 平滑过渡缩放
-      currentScale.current += (scale - currentScale.current) * 0.1;
-      if (axis === "z") {
-        meshRef.current.scale.set(1, 1, currentScale.current);
-      }
+    // 平滑过渡缩放
+    const diff = scale - currentScaleRef.current;
+    if (Math.abs(diff) > 0.001) {
+      currentScaleRef.current += diff * 0.08;
+      setCurrentScale(currentScaleRef.current);
     }
   });
 
+  // 根据缩放计算实际端点位置
+  const axisLength = 5 * currentScale;
   const positiveEnd: [number, number, number] =
-    axis === "x" ? [5, 0, 0] : axis === "y" ? [0, 5, 0] : [0, 0, 5];
+    axis === "x" ? [5, 0, 0] : axis === "y" ? [0, 5, 0] : [0, 0, axisLength];
   const negativeEnd: [number, number, number] =
-    axis === "x" ? [-5, 0, 0] : axis === "y" ? [0, -5, 0] : [0, 0, -5];
+    axis === "x" ? [-5, 0, 0] : axis === "y" ? [0, -5, 0] : [0, 0, -axisLength];
   const origin: [number, number, number] = [0, 0, 0];
 
   const isPositiveHighlighted = highlightDirection === "positive";
   const isNegativeHighlighted = highlightDirection === "negative";
 
-  // 如果是z轴且缩放为0，不渲染
-  if (axis === "z" && scale < 0.01) return null;
+  // 如果是z轴且缩放接近0，不渲染
+  if (axis === "z" && currentScale < 0.02) return null;
+
+  // Z轴压缩时的透明度
+  const axisOpacity = axis === "z" ? Math.max(0.3, currentScale) : 1;
 
   return (
-    <group ref={meshRef}>
+    <group>
+      {/* 正方向高亮发光 */}
       {isPositiveHighlighted && (
         <Line
           points={[origin, positiveEnd]}
@@ -131,26 +160,32 @@ function AnimatedAxis({
           opacity={0.4}
         />
       )}
+      {/* 正方向主线 */}
       <Line
         points={[origin, positiveEnd]}
         color={isPositiveHighlighted ? "#ffffff" : color}
         lineWidth={isPositiveHighlighted ? 4 : 2}
+        transparent
+        opacity={axisOpacity}
       />
+      {/* 正方向标签 */}
       <Text
         position={[
           positiveEnd[0] * 1.1,
           positiveEnd[1] * 1.1,
-          positiveEnd[2] * 1.1,
+          positiveEnd[2] * 1.1 || 0.1,
         ]}
-        fontSize={0.3}
+        fontSize={0.3 * (axis === "z" ? Math.max(0.5, currentScale) : 1)}
         color={isPositiveHighlighted ? "#ffffff" : color}
         anchorX="center"
         anchorY="middle"
         fontWeight={isPositiveHighlighted ? "bold" : "normal"}
+        fillOpacity={axisOpacity}
       >
         {label}
       </Text>
 
+      {/* 负方向高亮发光 */}
       {isNegativeHighlighted && (
         <Line
           points={[origin, negativeEnd]}
@@ -160,17 +195,21 @@ function AnimatedAxis({
           opacity={0.4}
         />
       )}
+      {/* 负方向主线 */}
       <Line
         points={[origin, negativeEnd]}
         color={isNegativeHighlighted ? "#ffffff" : lightColor}
         lineWidth={isNegativeHighlighted ? 4 : 1}
+        transparent
+        opacity={axisOpacity}
       />
+      {/* 负方向标签（高亮时显示） */}
       {isNegativeHighlighted && (
         <Text
           position={[
             negativeEnd[0] * 1.1,
             negativeEnd[1] * 1.1,
-            negativeEnd[2] * 1.1,
+            negativeEnd[2] * 1.1 || -0.1,
           ]}
           fontSize={0.3}
           color="#ffffff"
@@ -180,6 +219,41 @@ function AnimatedAxis({
         >
           {`-${label}`}
         </Text>
+      )}
+
+      {/* Z轴压缩时显示压缩指示器 */}
+      {axis === "z" && currentScale < 0.95 && currentScale > 0.05 && (
+        <group>
+          {/* 压缩箭头指示 - 上方 */}
+          <Line
+            points={[
+              [0, 0, axisLength + 0.5],
+              [0, 0, axisLength + 0.2],
+            ]}
+            color="#f97316"
+            lineWidth={3}
+          />
+          <Line
+            points={[
+              [0, 0, -axisLength - 0.5],
+              [0, 0, -axisLength - 0.2],
+            ]}
+            color="#f97316"
+            lineWidth={3}
+          />
+          {/* 压缩进度环 */}
+          <mesh position={[0, 0, 0]} rotation={[Math.PI / 2, 0, 0]}>
+            <ringGeometry
+              args={[0.3, 0.35, 32, 1, 0, Math.PI * 2 * (1 - currentScale)]}
+            />
+            <meshBasicMaterial
+              color="#f97316"
+              transparent
+              opacity={0.8}
+              side={THREE.DoubleSide}
+            />
+          </mesh>
+        </group>
       )}
     </group>
   );
@@ -208,53 +282,118 @@ function GridFloor({ is2D }: { is2D: boolean }) {
   );
 }
 
-// 动画数据点组件
+// 动画数据点组件 - 带压扁效果和投影线
 function AnimatedDataPoint({
   position,
   targetPosition,
   color,
   size = 0.12,
+  zScale = 1,
+  showProjectionLine = false,
 }: {
   position: [number, number, number];
   targetPosition: [number, number, number];
   color: string;
   size?: number;
+  zScale?: number;
+  showProjectionLine?: boolean;
 }) {
   const meshRef = useRef<THREE.Mesh>(null);
   const currentPos = useRef(new THREE.Vector3(...position));
+  const currentZScale = useRef(1);
+  const [displayPos, setDisplayPos] =
+    useState<[number, number, number]>(position);
 
   useFrame(() => {
     if (meshRef.current) {
-      currentPos.current.lerp(new THREE.Vector3(...targetPosition), 0.08);
+      currentPos.current.lerp(new THREE.Vector3(...targetPosition), 0.06);
       meshRef.current.position.copy(currentPos.current);
+      setDisplayPos([
+        currentPos.current.x,
+        currentPos.current.y,
+        currentPos.current.z,
+      ]);
+
+      // 平滑过渡Z缩放（压扁效果）
+      currentZScale.current += (zScale - currentZScale.current) * 0.06;
+      const flattenScale = Math.max(0.1, currentZScale.current);
+      meshRef.current.scale.set(
+        1 + (1 - flattenScale) * 0.3,
+        1 + (1 - flattenScale) * 0.3,
+        flattenScale,
+      );
     }
   });
 
+  // 计算投影线（从当前位置到XY平面）
+  const projectionLineVisible =
+    showProjectionLine && Math.abs(displayPos[2]) > 0.1;
+
   return (
-    <mesh ref={meshRef} position={position}>
-      <sphereGeometry args={[size, 16, 16]} />
-      <meshStandardMaterial color={color} />
-    </mesh>
+    <group>
+      <mesh ref={meshRef} position={position}>
+        <sphereGeometry args={[size, 16, 16]} />
+        <meshStandardMaterial color={color} />
+      </mesh>
+      {/* 投影线：显示点到XY平面的垂直距离 */}
+      {projectionLineVisible && (
+        <>
+          <Line
+            points={[
+              [displayPos[0], displayPos[1], displayPos[2]],
+              [displayPos[0], displayPos[1], 0],
+            ]}
+            color={color}
+            lineWidth={1}
+            transparent
+            opacity={0.4}
+            dashed
+            dashSize={0.1}
+            gapSize={0.05}
+          />
+          {/* XY平面上的投影点（阴影） */}
+          <mesh position={[displayPos[0], displayPos[1], 0]}>
+            <circleGeometry args={[size * 0.8, 16]} />
+            <meshBasicMaterial
+              color={color}
+              transparent
+              opacity={0.3}
+              side={THREE.DoubleSide}
+            />
+          </mesh>
+        </>
+      )}
+    </group>
   );
 }
 
-// 查询点组件
+// 查询点组件 - 带压扁效果
 function AnimatedQueryPoint({
   position,
   targetPosition,
+  zScale = 1,
 }: {
   position: [number, number, number];
   targetPosition: [number, number, number];
+  zScale?: number;
 }) {
   const meshRef = useRef<THREE.Mesh>(null);
   const currentPos = useRef(new THREE.Vector3(...position));
+  const currentZScale = useRef(1);
 
   useFrame((state) => {
     if (meshRef.current) {
       currentPos.current.lerp(new THREE.Vector3(...targetPosition), 0.08);
       meshRef.current.position.copy(currentPos.current);
-      meshRef.current.scale.setScalar(
-        1 + Math.sin(state.clock.elapsedTime * 2) * 0.1,
+
+      // 压扁效果
+      currentZScale.current += (zScale - currentZScale.current) * 0.08;
+      const flattenScale = Math.max(0.1, currentZScale.current);
+      const pulse = 1 + Math.sin(state.clock.elapsedTime * 2) * 0.1;
+      meshRef.current.scale.set(
+        pulse * (1 + (1 - flattenScale) * 0.3),
+        pulse * (1 + (1 - flattenScale) * 0.3),
+        pulse * flattenScale,
       );
     }
   });
@@ -271,23 +410,35 @@ function AnimatedQueryPoint({
   );
 }
 
-// 动画类别中心点
+// 动画类别中心点 - 带压扁效果
 function AnimatedClusterCenter({
   position,
   targetPosition,
   color,
+  zScale = 1,
 }: {
   position: [number, number, number];
   targetPosition: [number, number, number];
   color: string;
+  zScale?: number;
 }) {
   const meshRef = useRef<THREE.Mesh>(null);
   const currentPos = useRef(new THREE.Vector3(...position));
+  const currentZScale = useRef(1);
 
   useFrame(() => {
     if (meshRef.current) {
       currentPos.current.lerp(new THREE.Vector3(...targetPosition), 0.08);
       meshRef.current.position.copy(currentPos.current);
+
+      // 压扁效果
+      currentZScale.current += (zScale - currentZScale.current) * 0.08;
+      const flattenScale = Math.max(0.15, currentZScale.current);
+      meshRef.current.scale.set(
+        1 + (1 - flattenScale) * 0.4,
+        1 + (1 - flattenScale) * 0.4,
+        flattenScale,
+      );
     }
   });
 
@@ -426,6 +577,10 @@ function Scene({
   // Z轴缩放（用于动画）
   const zAxisScale = viewMode === "2d" ? 1 - animationProgress : 1;
 
+  // 是否显示投影线（在压扁动画进行中时显示）
+  const showProjectionLines =
+    viewMode === "2d" && animationProgress > 0.05 && animationProgress < 0.95;
+
   // 判断某个轴的高亮方向
   const getHighlightDir = (axisIndex: number) => {
     if (highlightedAxis?.axis === axisIndex) {
@@ -472,7 +627,10 @@ function Scene({
       <GridFloor is2D={viewMode === "2d"} />
 
       {/* 相机控制器 */}
-      <CameraController viewMode={viewMode} />
+      <CameraController
+        viewMode={viewMode}
+        animationProgress={animationProgress}
+      />
 
       {/* 高维指示器 */}
       <DimensionIndicator
@@ -490,6 +648,7 @@ function Scene({
             position={projectTo3D(point, 3, 0)}
             targetPosition={targetPos}
             color="#991b1b"
+            zScale={zAxisScale}
           />
         );
       })}
@@ -497,6 +656,7 @@ function Scene({
         position={projectTo3D(centerA, 3, 0)}
         targetPosition={projectedCenterA}
         color="#7f1d1d"
+        zScale={zAxisScale}
       />
 
       {/* 类别B数据点 */}
@@ -508,6 +668,7 @@ function Scene({
             position={projectTo3D(point, 3, 0)}
             targetPosition={targetPos}
             color="#1d4ed8"
+            zScale={zAxisScale}
           />
         );
       })}
@@ -515,6 +676,7 @@ function Scene({
         position={projectTo3D(centerB, 3, 0)}
         targetPosition={projectedCenterB}
         color="#1e3a8a"
+        zScale={zAxisScale}
       />
 
       {/* 类别C数据点 */}
@@ -526,6 +688,7 @@ function Scene({
             position={projectTo3D(point, 3, 0)}
             targetPosition={targetPos}
             color="#166534"
+            zScale={zAxisScale}
           />
         );
       })}
@@ -533,12 +696,14 @@ function Scene({
         position={projectTo3D(centerC, 3, 0)}
         targetPosition={projectedCenterC}
         color="#14532d"
+        zScale={zAxisScale}
       />
 
       {/* 查询点 */}
       <AnimatedQueryPoint
         position={projectTo3D(queryFeatures, 3, 0)}
         targetPosition={projectedQueryPos}
+        zScale={zAxisScale}
       />
 
       {/* 连接线到最近邻 */}
