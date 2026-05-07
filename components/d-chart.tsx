@@ -1,57 +1,92 @@
 "use client";
 
-import { useState, useRef, useMemo, useCallback, useEffect } from "react";
+import { useState, useRef, useMemo, useEffect, useCallback } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { OrbitControls, Text, Line } from "@react-three/drei";
+import { OrbitControls, Line, Text } from "@react-three/drei";
 import * as THREE from "three";
 import { Slider } from "@/components/ui/slider";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 
-// 维度配置
-const DIMENSION_COLORS = [
-  { color: "#ef4444", lightColor: "#fca5a5", label: "X" }, // 红
-  { color: "#22c55e", lightColor: "#86efac", label: "Y" }, // 绿
-  { color: "#3b82f6", lightColor: "#93c5fd", label: "Z" }, // 蓝
-  { color: "#a855f7", lightColor: "#d8b4fe", label: "W" }, // 紫
-  { color: "#f97316", lightColor: "#fdba74", label: "V" }, // 橙
+// ─────────────────────────────────────────────────────────────
+// 坐标系说明（重要）：
+//   特征1 (f1) → Three.js X 轴（水平，向右）
+//   特征2 (f2) → Three.js Z 轴（水平，向前/后）
+//   特征3 (f3) → Three.js Y 轴（垂直，向上，降维时被压到0）
+//
+// 这样俯视(top-down)时，X 水平、Z 垂直，网格完全正常。
+// ─────────────────────────────────────────────────────────────
+
+const easeInOut = (t: number) =>
+  t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+
+const FEAT_COLORS = {
+  f1: "#f43f5e", // 特征1 → X → 红
+  f2: "#22d3ee", // 特征2 → Z → 青
+  f3: "#a78bfa", // 特征3 → Y → 紫（被压缩）
+};
+
+const PHASES = [
+  {
+    range: [0, 0.3] as [number, number],
+    label: "① 侧面观察",
+    desc: "从侧面看，能清楚看到点在「特征3」方向有多高",
+  },
+  {
+    range: [0.3, 0.65] as [number, number],
+    label: "② 压缩特征3",
+    desc: "特征3（Y 轴）正在被丢弃，注意高度竖线消失",
+  },
+  {
+    range: [0.65, 1.0] as [number, number],
+    label: "③ 俯视 2D",
+    desc: "从正上方俯视：只剩特征1（X）和特征2（Z）",
+  },
 ];
 
-// 相机控制器 - 平滑过渡相机位置
-function CameraController({
-  viewMode,
-  animationProgress,
+function getPhase(p: number) {
+  for (let i = 0; i < PHASES.length; i++) {
+    const [a, b] = PHASES[i].range;
+    if (p <= b)
+      return { ...PHASES[i], localT: Math.min(1, (p - a) / (b - a)), index: i };
+  }
+  return { ...PHASES[PHASES.length - 1], localT: 1, index: PHASES.length - 1 };
+}
+
+// ─── 相机控制器 ───────────────────────────────────────────────
+// 3D 默认：斜45度 (9, 8, 9) → 三轴都清晰
+// 阶段1：移到侧面 (0, 6, 16) → 能看到Y轴高度
+// 阶段2：保持侧面，看Y被压扁
+// 阶段3：升到正上方 (0, 20, 0.1) → 俯视XZ平面
+function CameraRig({
+  progress,
+  active,
 }: {
-  viewMode: "3d" | "2d";
-  animationProgress: number;
+  progress: number;
+  active: boolean;
 }) {
   const { camera } = useThree();
-  const targetPosRef = useRef(new THREE.Vector3(8, 6, 8));
 
   useFrame(() => {
-    // 3D转2D时：先保持斜视角看压扁过程，压扁完成后再转正
-    // 2D转3D时：先转到斜视角，再展开
+    if (!active && progress === 0) return;
+    let tx: number, ty: number, tz: number;
 
-    let targetPos: THREE.Vector3;
-
-    if (viewMode === "2d") {
-      // 压扁阶段（0-0.7）：保持斜视角，可以看到Z方向的变化
-      // 转正阶段（0.7-1）：转到正面视图
-      if (animationProgress < 0.7) {
-        // 斜视角，稍微调整让Z轴变化更明显
-        targetPos = new THREE.Vector3(6, 4, 10);
-      } else {
-        // 逐渐转到正面
-        const t = (animationProgress - 0.7) / 0.3;
-        targetPos = new THREE.Vector3(6 * (1 - t), 4 * (1 - t), 10 + 5 * t);
-      }
+    if (progress < 0.3) {
+      const t = easeInOut(progress / 0.3);
+      tx = lerp(9, 0, t);
+      ty = lerp(8, 5, t);
+      tz = lerp(9, 18, t);
+    } else if (progress < 0.65) {
+      tx = 0;
+      ty = 5;
+      tz = 18;
     } else {
-      // 3D模式
-      targetPos = new THREE.Vector3(8, 6, 8);
+      const t = easeInOut((progress - 0.65) / 0.35);
+      tx = lerp(0, 0.01, t);
+      ty = lerp(5, 22, t);
+      tz = lerp(18, 0.01, t);
     }
 
-    // 平滑过渡
-    camera.position.lerp(targetPos, 0.05);
+    camera.position.lerp(new THREE.Vector3(tx, ty, tz), 0.06);
     camera.lookAt(0, 0, 0);
     camera.updateProjectionMatrix();
   });
@@ -59,1050 +94,971 @@ function CameraController({
   return null;
 }
 
-// 生成高维随机数据点
-function generateHighDimClusterData(
-  center: number[],
-  count: number,
-  spread: number,
-): number[][] {
-  const points: number[][] = [];
-  for (let i = 0; i < count; i++) {
-    const point = center.map((c) => c + (Math.random() - 0.5) * spread);
-    points.push(point);
-  }
-  return points;
-}
-
-// 计算高维欧氏距离
-function euclideanDistanceND(a: number[], b: number[]): number {
-  let sum = 0;
-  for (let i = 0; i < Math.min(a.length, b.length); i++) {
-    sum += (a[i] - b[i]) ** 2;
-  }
-  return Math.sqrt(sum);
-}
-
-// 将高维点投影到3D（简单的前3维投影）
-function projectTo3D(
-  point: number[],
-  targetDim: number,
-  animationProgress: number,
-): [number, number, number] {
-  const x = point[0] || 0;
-  const y = point[1] || 0;
-
-  // 根据目标维度决定z值
-  if (targetDim === 2) {
-    // 2D: z轴压扁到0
-    const z = (point[2] || 0) * (1 - animationProgress);
-    return [x, y, z];
-  } else {
-    // 3D: 正常显示z
-    const z = point[2] || 0;
-    return [x, y, z];
-  }
-}
-
-// 动画坐标轴组件 - 带压扁效果
-function AnimatedAxis({
-  axis,
-  color,
-  lightColor,
-  label,
-  highlightDirection,
-  scale,
-}: {
-  axis: "x" | "y" | "z";
-  color: string;
-  lightColor: string;
-  label: string;
-  highlightDirection: "positive" | "negative" | null;
-  scale: number;
-}) {
-  const currentScaleRef = useRef(scale);
-  const [currentScale, setCurrentScale] = useState(scale);
+// ─── 坐标轴 ──────────────────────────────────────────────────
+// X轴（特征1）、Z轴（特征2）永远可见
+// Y轴（特征3）随 yProgress 缩短消失
+function CoordAxes({ yProgress }: { yProgress: number }) {
+  const smoothY = useRef(1 - yProgress);
+  const [ys, setYs] = useState(1);
 
   useFrame(() => {
-    // 平滑过渡缩放
-    const diff = scale - currentScaleRef.current;
-    if (Math.abs(diff) > 0.001) {
-      currentScaleRef.current += diff * 0.08;
-      setCurrentScale(currentScaleRef.current);
-    }
+    const target = 1 - yProgress;
+    smoothY.current += (target - smoothY.current) * 0.08;
+    setYs(smoothY.current);
   });
 
-  // 根据缩放计算实际端点位置
-  const axisLength = 5 * currentScale;
-  const positiveEnd: [number, number, number] =
-    axis === "x" ? [5, 0, 0] : axis === "y" ? [0, 5, 0] : [0, 0, axisLength];
-  const negativeEnd: [number, number, number] =
-    axis === "x" ? [-5, 0, 0] : axis === "y" ? [0, -5, 0] : [0, 0, -axisLength];
-  const origin: [number, number, number] = [0, 0, 0];
-
-  const isPositiveHighlighted = highlightDirection === "positive";
-  const isNegativeHighlighted = highlightDirection === "negative";
-
-  // 如果是z轴且缩放接近0，不渲染
-  if (axis === "z" && currentScale < 0.02) return null;
-
-  // Z轴压缩时的透明度
-  const axisOpacity = axis === "z" ? Math.max(0.3, currentScale) : 1;
+  const len = 6;
+  const ticks = [-4, -3, -2, -1, 1, 2, 3, 4];
 
   return (
     <group>
-      {/* 正方向高亮发光 */}
-      {isPositiveHighlighted && (
-        <Line
-          points={[origin, positiveEnd]}
-          color={color}
-          lineWidth={10}
-          transparent
-          opacity={0.4}
-        />
-      )}
-      {/* 正方向主线 */}
+      {/* ── X 轴（特征1）── */}
       <Line
-        points={[origin, positiveEnd]}
-        color={isPositiveHighlighted ? "#ffffff" : color}
-        lineWidth={isPositiveHighlighted ? 4 : 2}
-        transparent
-        opacity={axisOpacity}
-      />
-      {/* 正方向标签 */}
-      <Text
-        position={[
-          positiveEnd[0] * 1.1,
-          positiveEnd[1] * 1.1,
-          positiveEnd[2] * 1.1 || 0.1,
+        points={[
+          [-len, 0, 0],
+          [len, 0, 0],
         ]}
-        fontSize={0.3 * (axis === "z" ? Math.max(0.5, currentScale) : 1)}
-        color={isPositiveHighlighted ? "#ffffff" : color}
+        color={FEAT_COLORS.f1}
+        lineWidth={2.5}
+        transparent
+        opacity={0.85}
+      />
+      <Text
+        position={[len + 0.5, 0, 0]}
+        fontSize={0.4}
+        color={FEAT_COLORS.f1}
         anchorX="center"
         anchorY="middle"
-        fontWeight={isPositiveHighlighted ? "bold" : "normal"}
-        fillOpacity={axisOpacity}
       >
-        {label}
+        X
       </Text>
-
-      {/* 负方向高亮发光 */}
-      {isNegativeHighlighted && (
-        <Line
-          points={[origin, negativeEnd]}
-          color={color}
-          lineWidth={10}
-          transparent
-          opacity={0.4}
-        />
-      )}
-      {/* 负方向主线 */}
-      <Line
-        points={[origin, negativeEnd]}
-        color={isNegativeHighlighted ? "#ffffff" : lightColor}
-        lineWidth={isNegativeHighlighted ? 4 : 1}
-        transparent
-        opacity={axisOpacity}
-      />
-      {/* 负方向标签（高亮时显示） */}
-      {isNegativeHighlighted && (
-        <Text
-          position={[
-            negativeEnd[0] * 1.1,
-            negativeEnd[1] * 1.1,
-            negativeEnd[2] * 1.1 || -0.1,
-          ]}
-          fontSize={0.3}
-          color="#ffffff"
-          anchorX="center"
-          anchorY="middle"
-          fontWeight="bold"
-        >
-          {`-${label}`}
-        </Text>
-      )}
-
-      {/* Z轴压缩时显示压缩指示器 */}
-      {axis === "z" && currentScale < 0.95 && currentScale > 0.05 && (
-        <group>
-          {/* 压缩箭头指示 - 上方 */}
+      <Text
+        position={[len + 0.5, -0.55, 0]}
+        fontSize={0.22}
+        color={FEAT_COLORS.f1}
+        anchorX="center"
+        anchorY="middle"
+        fillOpacity={0.6}
+      >
+        特征1
+      </Text>
+      {ticks.map((t) => (
+        <group key={t} position={[t, 0, 0]}>
           <Line
             points={[
-              [0, 0, axisLength + 0.5],
-              [0, 0, axisLength + 0.2],
+              [0, 0, -0.1],
+              [0, 0, 0.1],
             ]}
-            color="#f97316"
-            lineWidth={3}
-          />
-          <Line
-            points={[
-              [0, 0, -axisLength - 0.5],
-              [0, 0, -axisLength - 0.2],
-            ]}
-            color="#f97316"
-            lineWidth={3}
-          />
-          {/* 压缩进度环 */}
-          <mesh position={[0, 0, 0]} rotation={[Math.PI / 2, 0, 0]}>
-            <ringGeometry
-              args={[0.3, 0.35, 32, 1, 0, Math.PI * 2 * (1 - currentScale)]}
-            />
-            <meshBasicMaterial
-              color="#f97316"
-              transparent
-              opacity={0.8}
-              side={THREE.DoubleSide}
-            />
-          </mesh>
-        </group>
-      )}
-    </group>
-  );
-}
-
-// 网格地面
-function GridFloor({ is2D }: { is2D: boolean }) {
-  const rotationRef = useRef<THREE.Mesh>(null);
-  const targetRotation = is2D ? 0 : -Math.PI / 2;
-
-  useFrame(() => {
-    if (rotationRef.current) {
-      rotationRef.current.rotation.x +=
-        (targetRotation - rotationRef.current.rotation.x) * 0.1;
-    }
-  });
-
-  return (
-    <group ref={rotationRef as any}>
-      <gridHelper
-        args={[10, 20, "#94a3b8", "#cbd5e1"]}
-        rotation={[Math.PI / 2, 0, 0]}
-        position={[0, 0, -0.01]}
-      />
-    </group>
-  );
-}
-
-// 动画数据点组件 - 带压扁效果和投影线
-function AnimatedDataPoint({
-  position,
-  targetPosition,
-  color,
-  size = 0.12,
-  zScale = 1,
-  showProjectionLine = false,
-}: {
-  position: [number, number, number];
-  targetPosition: [number, number, number];
-  color: string;
-  size?: number;
-  zScale?: number;
-  showProjectionLine?: boolean;
-}) {
-  const meshRef = useRef<THREE.Mesh>(null);
-  const currentPos = useRef(new THREE.Vector3(...position));
-  const currentZScale = useRef(1);
-  const [displayPos, setDisplayPos] =
-    useState<[number, number, number]>(position);
-
-  useFrame(() => {
-    if (meshRef.current) {
-      currentPos.current.lerp(new THREE.Vector3(...targetPosition), 0.06);
-      meshRef.current.position.copy(currentPos.current);
-      setDisplayPos([
-        currentPos.current.x,
-        currentPos.current.y,
-        currentPos.current.z,
-      ]);
-
-      // 平滑过渡Z缩放（压扁效果）
-      currentZScale.current += (zScale - currentZScale.current) * 0.06;
-      const flattenScale = Math.max(0.1, currentZScale.current);
-      meshRef.current.scale.set(
-        1 + (1 - flattenScale) * 0.3,
-        1 + (1 - flattenScale) * 0.3,
-        flattenScale,
-      );
-    }
-  });
-
-  // 计算投影线（从当前位置到XY平面）
-  const projectionLineVisible =
-    showProjectionLine && Math.abs(displayPos[2]) > 0.1;
-
-  return (
-    <group>
-      <mesh ref={meshRef} position={position}>
-        <sphereGeometry args={[size, 16, 16]} />
-        <meshStandardMaterial color={color} />
-      </mesh>
-      {/* 投影线：显示点到XY平面的垂直距离 */}
-      {projectionLineVisible && (
-        <>
-          <Line
-            points={[
-              [displayPos[0], displayPos[1], displayPos[2]],
-              [displayPos[0], displayPos[1], 0],
-            ]}
-            color={color}
+            color={FEAT_COLORS.f1}
             lineWidth={1}
             transparent
             opacity={0.4}
-            dashed
-            dashSize={0.1}
-            gapSize={0.05}
           />
-          {/* XY平面上的投影点（阴影） */}
-          <mesh position={[displayPos[0], displayPos[1], 0]}>
-            <circleGeometry args={[size * 0.8, 16]} />
-            <meshBasicMaterial
-              color={color}
-              transparent
-              opacity={0.3}
-              side={THREE.DoubleSide}
-            />
-          </mesh>
-        </>
-      )}
-    </group>
-  );
-}
-
-// 查询点组件 - 带压扁效果
-function AnimatedQueryPoint({
-  position,
-  targetPosition,
-  zScale = 1,
-}: {
-  position: [number, number, number];
-  targetPosition: [number, number, number];
-  zScale?: number;
-}) {
-  const meshRef = useRef<THREE.Mesh>(null);
-  const currentPos = useRef(new THREE.Vector3(...position));
-  const currentZScale = useRef(1);
-
-  useFrame((state) => {
-    if (meshRef.current) {
-      currentPos.current.lerp(new THREE.Vector3(...targetPosition), 0.08);
-      meshRef.current.position.copy(currentPos.current);
-
-      // 压扁效果
-      currentZScale.current += (zScale - currentZScale.current) * 0.08;
-      const flattenScale = Math.max(0.1, currentZScale.current);
-      const pulse = 1 + Math.sin(state.clock.elapsedTime * 2) * 0.1;
-      meshRef.current.scale.set(
-        pulse * (1 + (1 - flattenScale) * 0.3),
-        pulse * (1 + (1 - flattenScale) * 0.3),
-        pulse * flattenScale,
-      );
-    }
-  });
-
-  return (
-    <mesh ref={meshRef} position={position}>
-      <sphereGeometry args={[0.25, 32, 32]} />
-      <meshStandardMaterial
-        color="#facc15"
-        emissive="#facc15"
-        emissiveIntensity={0.3}
-      />
-    </mesh>
-  );
-}
-
-// 动画类别中心点 - 带压扁效果
-function AnimatedClusterCenter({
-  position,
-  targetPosition,
-  color,
-  zScale = 1,
-}: {
-  position: [number, number, number];
-  targetPosition: [number, number, number];
-  color: string;
-  zScale?: number;
-}) {
-  const meshRef = useRef<THREE.Mesh>(null);
-  const currentPos = useRef(new THREE.Vector3(...position));
-  const currentZScale = useRef(1);
-
-  useFrame(() => {
-    if (meshRef.current) {
-      currentPos.current.lerp(new THREE.Vector3(...targetPosition), 0.08);
-      meshRef.current.position.copy(currentPos.current);
-
-      // 压扁效果
-      currentZScale.current += (zScale - currentZScale.current) * 0.08;
-      const flattenScale = Math.max(0.15, currentZScale.current);
-      meshRef.current.scale.set(
-        1 + (1 - flattenScale) * 0.4,
-        1 + (1 - flattenScale) * 0.4,
-        flattenScale,
-      );
-    }
-  });
-
-  return (
-    <mesh ref={meshRef} position={position}>
-      <sphereGeometry args={[0.3, 32, 32]} />
-      <meshStandardMaterial color={color} />
-    </mesh>
-  );
-}
-
-// 动画连线
-function AnimatedConnectionLine({
-  start,
-  end,
-  color,
-}: {
-  start: [number, number, number];
-  end: [number, number, number];
-  color: string;
-}) {
-  const lineRef = useRef<any>(null);
-  const currentStart = useRef(new THREE.Vector3(...start));
-  const currentEnd = useRef(new THREE.Vector3(...end));
-
-  useFrame(() => {
-    currentStart.current.lerp(new THREE.Vector3(...start), 0.08);
-    currentEnd.current.lerp(new THREE.Vector3(...end), 0.08);
-  });
-
-  return (
-    <Line
-      points={[start, end]}
-      color={color}
-      lineWidth={2}
-      dashed
-      dashSize={0.1}
-      gapSize={0.05}
-    />
-  );
-}
-
-// 高维指示器 - 显示被折叠的维度
-function DimensionIndicator({
-  dimensions,
-  targetDimensions,
-  features,
-}: {
-  dimensions: number;
-  targetDimensions: number;
-  features: number[];
-}) {
-  if (dimensions <= 3) return null;
-
-  const collapsedDims = dimensions - targetDimensions;
-
-  return (
-    <group position={[6, 3, 0]}>
-      <Text
-        position={[0, 0.5, 0]}
-        fontSize={0.25}
-        color="#64748b"
-        anchorX="left"
-      >
-        {`隐藏维度: ${collapsedDims}`}
-      </Text>
-      {features.slice(3).map((value, i) => (
-        <group key={i} position={[0, -i * 0.4, 0]}>
           <Text
-            position={[0, 0, 0]}
-            fontSize={0.2}
-            color={DIMENSION_COLORS[3 + i]?.color || "#888"}
-            anchorX="left"
+            position={[0, 0, 0.35]}
+            fontSize={0.18}
+            color={FEAT_COLORS.f1}
+            anchorX="center"
+            fillOpacity={0.4}
           >
-            {`${DIMENSION_COLORS[3 + i]?.label || `D${4 + i}`}: ${value.toFixed(1)}`}
+            {t}
           </Text>
         </group>
       ))}
+
+      {/* ── Z 轴（特征2）── */}
+      <Line
+        points={[
+          [0, 0, -len],
+          [0, 0, len],
+        ]}
+        color={FEAT_COLORS.f2}
+        lineWidth={2.5}
+        transparent
+        opacity={0.85}
+      />
+      <Text
+        position={[0, 0, len + 0.5]}
+        fontSize={0.4}
+        color={FEAT_COLORS.f2}
+        anchorX="center"
+        anchorY="middle"
+      >
+        Z
+      </Text>
+      <Text
+        position={[0.55, 0, len + 0.5]}
+        fontSize={0.22}
+        color={FEAT_COLORS.f2}
+        anchorX="left"
+        anchorY="middle"
+        fillOpacity={0.6}
+      >
+        特征2
+      </Text>
+      {ticks.map((t) => (
+        <group key={t} position={[0, 0, t]}>
+          <Line
+            points={[
+              [-0.1, 0, 0],
+              [0.1, 0, 0],
+            ]}
+            color={FEAT_COLORS.f2}
+            lineWidth={1}
+            transparent
+            opacity={0.4}
+          />
+          <Text
+            position={[0.35, 0, 0]}
+            fontSize={0.18}
+            color={FEAT_COLORS.f2}
+            anchorX="left"
+            fillOpacity={0.4}
+          >
+            {t}
+          </Text>
+        </group>
+      ))}
+
+      {/* ── Y 轴（特征3，被压缩）── */}
+      {ys > 0.02 && (
+        <>
+          <Line
+            points={[
+              [0, 0, 0],
+              [0, len * ys, 0],
+            ]}
+            color={FEAT_COLORS.f3}
+            lineWidth={2.5}
+            transparent
+            opacity={ys * 0.85}
+          />
+          <Line
+            points={[
+              [0, -len * ys * 0.3, 0],
+              [0, 0, 0],
+            ]}
+            color={FEAT_COLORS.f3}
+            lineWidth={1}
+            transparent
+            opacity={ys * 0.3}
+          />
+          <Text
+            position={[0, len * ys + 0.55, 0]}
+            fontSize={0.4 * Math.max(0.5, ys)}
+            color={FEAT_COLORS.f3}
+            anchorX="center"
+            anchorY="middle"
+            fillOpacity={ys}
+          >
+            Y
+          </Text>
+          <Text
+            position={[0.55, len * ys + 0.55, 0]}
+            fontSize={0.22 * Math.max(0.5, ys)}
+            color={FEAT_COLORS.f3}
+            anchorX="left"
+            anchorY="middle"
+            fillOpacity={ys * 0.7}
+          >
+            特征3
+          </Text>
+          {ticks
+            .filter((t) => Math.abs(t) <= len * ys)
+            .map((t) => (
+              <group key={t} position={[0, t, 0]}>
+                <Line
+                  points={[
+                    [-0.1, 0, 0],
+                    [0.1, 0, 0],
+                  ]}
+                  color={FEAT_COLORS.f3}
+                  lineWidth={1}
+                  transparent
+                  opacity={0.3 * ys}
+                />
+              </group>
+            ))}
+        </>
+      )}
+
+      {/* 原点 */}
+      <mesh>
+        <sphereGeometry args={[0.07, 16, 16]} />
+        <meshBasicMaterial color="#ffffff" />
+      </mesh>
     </group>
   );
 }
 
-// 3D场景
-function Scene({
-  queryFeatures,
-  highlightedAxis,
-  clusterA,
-  clusterB,
-  clusterC,
-  centerA,
-  centerB,
-  centerC,
-  nearestCluster,
-  viewMode,
-  dimensions,
-  animationProgress,
-}: {
-  queryFeatures: number[];
-  highlightedAxis: { axis: number; direction: "positive" | "negative" } | null;
-  clusterA: number[][];
-  clusterB: number[][];
-  clusterC: number[][];
-  centerA: number[];
-  centerB: number[];
-  centerC: number[];
-  nearestCluster: "A" | "B" | "C";
-  viewMode: "3d" | "2d";
-  dimensions: number;
-  animationProgress: number;
-}) {
-  const targetDim = viewMode === "2d" ? 2 : 3;
+// ─── 地板网格（XZ平面，完全水平）────────────────────────────
+function Floor({ yProgress }: { yProgress: number }) {
+  const opacity = useRef(0);
+  const meshRef = useRef<THREE.Mesh>(null);
 
-  // 投影所有点
-  const projectedQueryPos = projectTo3D(
-    queryFeatures,
-    targetDim,
-    animationProgress,
-  );
-  const projectedCenterA = projectTo3D(centerA, targetDim, animationProgress);
-  const projectedCenterB = projectTo3D(centerB, targetDim, animationProgress);
-  const projectedCenterC = projectTo3D(centerC, targetDim, animationProgress);
-
-  const nearestCenter =
-    nearestCluster === "A"
-      ? projectedCenterA
-      : nearestCluster === "B"
-        ? projectedCenterB
-        : projectedCenterC;
-  const nearestColor =
-    nearestCluster === "A"
-      ? "#991b1b"
-      : nearestCluster === "B"
-        ? "#1d4ed8"
-        : "#166534";
-
-  // Z轴缩放（用于动画）
-  const zAxisScale = viewMode === "2d" ? 1 - animationProgress : 1;
-
-  // 是否显示投影线（在压扁动画进行中时显示）
-  const showProjectionLines =
-    viewMode === "2d" && animationProgress > 0.05 && animationProgress < 0.95;
-
-  // 判断某个轴的高亮方向
-  const getHighlightDir = (axisIndex: number) => {
-    if (highlightedAxis?.axis === axisIndex) {
-      return highlightedAxis.direction;
+  useFrame(() => {
+    opacity.current += (yProgress * 0.12 - opacity.current) * 0.06;
+    if (meshRef.current) {
+      (meshRef.current.material as THREE.MeshBasicMaterial).opacity =
+        opacity.current;
     }
-    return null;
-  };
+  });
 
   return (
     <>
-      <ambientLight intensity={0.6} />
-      <pointLight position={[10, 10, 10]} intensity={1} />
-      <pointLight position={[-10, -10, -10]} intensity={0.5} />
-
-      {/* X轴 */}
-      <AnimatedAxis
-        axis="x"
-        color={DIMENSION_COLORS[0].color}
-        lightColor={DIMENSION_COLORS[0].lightColor}
-        label={DIMENSION_COLORS[0].label}
-        highlightDirection={getHighlightDir(0)}
-        scale={1}
-      />
-      {/* Y轴 */}
-      <AnimatedAxis
-        axis="y"
-        color={DIMENSION_COLORS[1].color}
-        lightColor={DIMENSION_COLORS[1].lightColor}
-        label={DIMENSION_COLORS[1].label}
-        highlightDirection={getHighlightDir(1)}
-        scale={1}
-      />
-      {/* Z轴 - 带压扁动画 */}
-      <AnimatedAxis
-        axis="z"
-        color={DIMENSION_COLORS[2].color}
-        lightColor={DIMENSION_COLORS[2].lightColor}
-        label={DIMENSION_COLORS[2].label}
-        highlightDirection={getHighlightDir(2)}
-        scale={zAxisScale}
-      />
-
-      {/* 网格地面 */}
-      <GridFloor is2D={viewMode === "2d"} />
-
-      {/* 相机控制器 */}
-      <CameraController
-        viewMode={viewMode}
-        animationProgress={animationProgress}
-      />
-
-      {/* 高维指示器 */}
-      <DimensionIndicator
-        dimensions={dimensions}
-        targetDimensions={3}
-        features={queryFeatures}
-      />
-
-      {/* 类别A数据点 */}
-      {clusterA.map((point, i) => {
-        const targetPos = projectTo3D(point, targetDim, animationProgress);
-        return (
-          <AnimatedDataPoint
-            key={`a-${i}`}
-            position={projectTo3D(point, 3, 0)}
-            targetPosition={targetPos}
-            color="#991b1b"
-            zScale={zAxisScale}
-          />
-        );
-      })}
-      <AnimatedClusterCenter
-        position={projectTo3D(centerA, 3, 0)}
-        targetPosition={projectedCenterA}
-        color="#7f1d1d"
-        zScale={zAxisScale}
-      />
-
-      {/* 类别B数据点 */}
-      {clusterB.map((point, i) => {
-        const targetPos = projectTo3D(point, targetDim, animationProgress);
-        return (
-          <AnimatedDataPoint
-            key={`b-${i}`}
-            position={projectTo3D(point, 3, 0)}
-            targetPosition={targetPos}
-            color="#1d4ed8"
-            zScale={zAxisScale}
-          />
-        );
-      })}
-      <AnimatedClusterCenter
-        position={projectTo3D(centerB, 3, 0)}
-        targetPosition={projectedCenterB}
-        color="#1e3a8a"
-        zScale={zAxisScale}
-      />
-
-      {/* 类别C数据点 */}
-      {clusterC.map((point, i) => {
-        const targetPos = projectTo3D(point, targetDim, animationProgress);
-        return (
-          <AnimatedDataPoint
-            key={`c-${i}`}
-            position={projectTo3D(point, 3, 0)}
-            targetPosition={targetPos}
-            color="#166534"
-            zScale={zAxisScale}
-          />
-        );
-      })}
-      <AnimatedClusterCenter
-        position={projectTo3D(centerC, 3, 0)}
-        targetPosition={projectedCenterC}
-        color="#14532d"
-        zScale={zAxisScale}
-      />
-
-      {/* 查询点 */}
-      <AnimatedQueryPoint
-        position={projectTo3D(queryFeatures, 3, 0)}
-        targetPosition={projectedQueryPos}
-        zScale={zAxisScale}
-      />
-
-      {/* 连接线到最近邻 */}
-      <AnimatedConnectionLine
-        start={projectedQueryPos}
-        end={nearestCenter}
-        color={nearestColor}
-      />
-
-      <OrbitControls
-        enablePan={true}
-        enableZoom={true}
-        enableRotate={viewMode === "3d"}
-      />
+      {/* gridHelper 默认就是 XZ 平面，完全正确 */}
+      <gridHelper args={[12, 24, "#334155", "#1e293b"]} />
+      <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[12, 12]} />
+        <meshBasicMaterial
+          color="#3b82f6"
+          transparent
+          opacity={0}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
     </>
   );
 }
 
-export default function FeatureSpaceDemo() {
-  const [dimensions, setDimensions] = useState(3); // 当前维度数量
-  const [features, setFeatures] = useState<number[]>([0, 0, 0, 0, 0]); // 最多5维特征
-  const [highlightedAxis, setHighlightedAxis] = useState<{
-    axis: number;
-    direction: "positive" | "negative";
-  } | null>(null);
-  const lastValuesRef = useRef<number[]>([0, 0, 0, 0, 0]);
-  const [viewMode, setViewMode] = useState<"3d" | "2d">("3d");
-  const [animationProgress, setAnimationProgress] = useState(0);
-
-  const highlightTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const animationRef = useRef<number | null>(null);
-
-  // 动画效果
-  useEffect(() => {
-    const targetProgress = viewMode === "2d" ? 1 : 0;
-
-    const animate = () => {
-      setAnimationProgress((prev) => {
-        const diff = targetProgress - prev;
-        if (Math.abs(diff) < 0.01) return targetProgress;
-        return prev + diff * 0.1;
-      });
-      animationRef.current = requestAnimationFrame(animate);
-    };
-
-    animationRef.current = requestAnimationFrame(animate);
-
-    return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
-      }
-    };
-  }, [viewMode]);
-
-  // 生成固定的聚类数据（支持高维）
-  const { clusterA, clusterB, clusterC, centerA, centerB, centerC } =
-    useMemo(() => {
-      const cA = [-2, 2, -1, 1, 0.5];
-      const cB = [1.5, 0.5, 1, -0.5, 1];
-      const cC = [0, -2, 0, 0.5, -1];
-
-      return {
-        clusterA: generateHighDimClusterData(cA, 25, 2),
-        clusterB: generateHighDimClusterData(cB, 25, 2),
-        clusterC: generateHighDimClusterData(cC, 25, 2),
-        centerA: cA,
-        centerB: cB,
-        centerC: cC,
-      };
-    }, []);
-
-  // 当前维度的特征值
-  const currentFeatures = features.slice(0, dimensions);
-
-  // 计算到各类别中心的距离（使用当前维度）
-  const distanceA = euclideanDistanceND(
-    currentFeatures,
-    centerA.slice(0, dimensions),
-  );
-  const distanceB = euclideanDistanceND(
-    currentFeatures,
-    centerB.slice(0, dimensions),
-  );
-  const distanceC = euclideanDistanceND(
-    currentFeatures,
-    centerC.slice(0, dimensions),
-  );
-
-  // 找最近的类别
-  const nearestCluster =
-    distanceA <= distanceB && distanceA <= distanceC
-      ? "A"
-      : distanceB <= distanceC
-        ? "B"
-        : "C";
-  const nearestDistance = Math.min(distanceA, distanceB, distanceC);
-
-  // 处理滑块变化时高亮对应轴
-  const handleFeatureChange = useCallback(
-    (axisIndex: number, value: number) => {
-      const lastValue = lastValuesRef.current[axisIndex];
-      const direction = value >= lastValue ? "positive" : "negative";
-
-      lastValuesRef.current[axisIndex] = value;
-      setHighlightedAxis({ axis: axisIndex, direction });
-
-      if (highlightTimeoutRef.current) {
-        clearTimeout(highlightTimeoutRef.current);
-      }
-
-      highlightTimeoutRef.current = setTimeout(() => {
-        setHighlightedAxis(null);
-      }, 2000);
-
-      setFeatures((prev) => {
-        const newFeatures = [...prev];
-        newFeatures[axisIndex] = value;
-        return newFeatures;
-      });
-    },
-    [],
-  );
-
-  // 切换维度
-  const handleDimensionChange = (newDim: number) => {
-    setDimensions(newDim);
-    // 如果是2D模式切换到更高维度，自动切回3D
-    if (viewMode === "2d" && newDim > 2) {
-      setViewMode("3d");
-    }
-  };
-
-  const resetQueryPoint = () => {
-    setFeatures([0, 0, 0, 0, 0]);
-    setHighlightedAxis(null);
-  };
+// ─── 投影辅助线 ──────────────────────────────────────────────
+// f1→X, f2→Z, f3→Y（被压缩）
+function ProjectionLines({
+  f1,
+  f2,
+  f3,
+  yProgress,
+}: {
+  f1: number;
+  f2: number;
+  f3: number;
+  yProgress: number;
+}) {
+  const effectiveY = f3 * (1 - yProgress);
 
   return (
-    <div className="min-h-screen bg-slate-100 p-6">
-      <div className="max-w-5xl mx-auto">
-        <div className="bg-white rounded-2xl shadow-lg p-6">
-          {/* 头部 */}
-          <div className="flex justify-between items-start mb-4">
-            <div>
-              <h1 className="text-2xl font-bold text-slate-800">
-                AI 特征空间演示
-              </h1>
-              <p className="text-slate-600 mt-1">
-                当前{" "}
-                <span className="font-semibold text-purple-600">
-                  {dimensions}D
-                </span>{" "}
-                空间 | 查询点与{" "}
-                <span className="font-semibold">类别 {nearestCluster}</span>{" "}
-                最相似 (距离: {nearestDistance.toFixed(2)})
-              </p>
-            </div>
-            <div className="text-right">
-              <div className="flex gap-4 text-sm text-slate-600 mb-1">
-                <span>最近邻</span>
-                <span>类别 A</span>
-                <span>类别 B</span>
-                <span>类别 C</span>
-              </div>
-              <div className="flex gap-4 items-center">
-                <span className="font-bold text-slate-800">
-                  类别 {nearestCluster}
-                </span>
-                <span className="font-semibold text-red-700">
-                  {distanceA.toFixed(2)}
-                </span>
-                <span className="font-semibold text-blue-700">
-                  {distanceB.toFixed(2)}
-                </span>
-                <span className="font-semibold text-green-700">
-                  {distanceC.toFixed(2)}
-                </span>
-              </div>
-            </div>
-          </div>
+    <group>
+      {/* Y方向竖线（特征3的高度）—— 最重要，动画主角 */}
+      {Math.abs(effectiveY) > 0.05 && (
+        <Line
+          points={[
+            [f1, effectiveY, f2],
+            [f1, 0, f2],
+          ]}
+          color={FEAT_COLORS.f3}
+          lineWidth={2.5}
+          dashed
+          dashSize={0.14}
+          gapSize={0.07}
+          transparent
+          opacity={(1 - yProgress) * 0.85}
+        />
+      )}
 
-          {/* 维度选择器 */}
-          <div className="flex items-center gap-2 mb-4">
-            <span className="text-sm font-medium text-slate-700">
-              维度数量:
+      {/* X方向虚线（到ZY平面） */}
+      <Line
+        points={[
+          [f1, 0, f2],
+          [0, 0, f2],
+        ]}
+        color={FEAT_COLORS.f1}
+        lineWidth={1.5}
+        dashed
+        dashSize={0.1}
+        gapSize={0.06}
+        transparent
+        opacity={0.45}
+      />
+
+      {/* Z方向虚线（到XY平面） */}
+      <Line
+        points={[
+          [f1, 0, f2],
+          [f1, 0, 0],
+        ]}
+        color={FEAT_COLORS.f2}
+        lineWidth={1.5}
+        dashed
+        dashSize={0.1}
+        gapSize={0.06}
+        transparent
+        opacity={0.45}
+      />
+
+      {/* XZ平面上的落点圆（Y投影结果）*/}
+      <mesh position={[f1, 0.01, f2]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[0.15, 32]} />
+        <meshBasicMaterial
+          color={FEAT_COLORS.f3}
+          transparent
+          opacity={Math.min(0.7, yProgress * 0.9)}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+
+      {/* X轴落点 */}
+      <mesh position={[f1, 0, 0]}>
+        <sphereGeometry args={[0.08, 12, 12]} />
+        <meshBasicMaterial color={FEAT_COLORS.f1} transparent opacity={0.6} />
+      </mesh>
+
+      {/* Z轴落点 */}
+      <mesh position={[0, 0, f2]}>
+        <sphereGeometry args={[0.08, 12, 12]} />
+        <meshBasicMaterial color={FEAT_COLORS.f2} transparent opacity={0.6} />
+      </mesh>
+    </group>
+  );
+}
+
+// ─── 向量分解线 ──────────────────────────────────────────────
+function FeatureVectors({
+  f1,
+  f2,
+  f3,
+  yProgress,
+  show,
+}: {
+  f1: number;
+  f2: number;
+  f3: number;
+  yProgress: number;
+  show: boolean;
+}) {
+  if (!show) return null;
+  const eff3 = f3 * (1 - yProgress);
+  return (
+    <group>
+      <Line
+        points={[
+          [0, 0, 0],
+          [f1, 0, 0],
+        ]}
+        color={FEAT_COLORS.f1}
+        lineWidth={3.5}
+        transparent
+        opacity={0.7}
+      />
+      <Line
+        points={[
+          [f1, 0, 0],
+          [f1, 0, f2],
+        ]}
+        color={FEAT_COLORS.f2}
+        lineWidth={3.5}
+        transparent
+        opacity={0.7}
+      />
+      {Math.abs(eff3) > 0.05 && (
+        <Line
+          points={[
+            [f1, 0, f2],
+            [f1, eff3, f2],
+          ]}
+          color={FEAT_COLORS.f3}
+          lineWidth={3.5}
+          transparent
+          opacity={(1 - yProgress) * 0.7}
+        />
+      )}
+      <Line
+        points={[
+          [0, 0, 0],
+          [f1, eff3, f2],
+        ]}
+        color="#ffffff"
+        lineWidth={1.5}
+        transparent
+        opacity={0.3}
+      />
+    </group>
+  );
+}
+
+// ─── 主数据点 ─────────────────────────────────────────────────
+function DataPoint({
+  f1,
+  f2,
+  f3,
+  yProgress,
+}: {
+  f1: number;
+  f2: number;
+  f3: number;
+  yProgress: number;
+}) {
+  const meshRef = useRef<THREE.Mesh>(null);
+  const glowRef = useRef<THREE.Mesh>(null);
+  const curY = useRef(f3);
+
+  useFrame((state) => {
+    const targetY = f3 * (1 - yProgress);
+    curY.current += (targetY - curY.current) * 0.08;
+    if (meshRef.current) {
+      meshRef.current.position.set(f1, curY.current, f2);
+      const sq = Math.max(0.06, 1 - yProgress * 0.94);
+      meshRef.current.scale.set(1 + (1 - sq) * 0.25, sq, 1 + (1 - sq) * 0.25);
+    }
+    if (glowRef.current) {
+      glowRef.current.position.set(f1, curY.current, f2);
+      const pulse = 1 + Math.sin(state.clock.elapsedTime * 2.2) * 0.1;
+      glowRef.current.scale.setScalar(pulse * 2.8);
+    }
+  });
+
+  return (
+    <group>
+      <mesh ref={glowRef} position={[f1, f3, f2]}>
+        <sphereGeometry args={[0.2, 16, 16]} />
+        <meshBasicMaterial color="#facc15" transparent opacity={0.07} />
+      </mesh>
+      <mesh ref={meshRef} position={[f1, f3, f2]}>
+        <sphereGeometry args={[0.2, 32, 32]} />
+        <meshStandardMaterial
+          color="#facc15"
+          emissive="#facc15"
+          emissiveIntensity={0.4}
+          roughness={0.1}
+          metalness={0.3}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+// ─── Y值丢失标注 ─────────────────────────────────────────────
+function YLossLabel({ f3, yProgress }: { f3: number; yProgress: number }) {
+  const visible = yProgress > 0.12 && yProgress < 0.9 && Math.abs(f3) > 0.2;
+  if (!visible) return null;
+  const curVal = f3 * (1 - yProgress);
+  const fadeIn = Math.min(1, (yProgress - 0.12) / 0.12);
+  const fadeOut = Math.min(1, (0.9 - yProgress) / 0.12);
+  const op = fadeIn * fadeOut;
+  return (
+    <group position={[3.5, Math.max(0.3, curVal + 0.3), 0]}>
+      <Text fontSize={0.3} color="#fb923c" anchorX="left" fillOpacity={op}>
+        {`特征3 = ${curVal.toFixed(2)}`}
+      </Text>
+      <Text
+        position={[0, -0.45, 0]}
+        fontSize={0.22}
+        color="#fb923c"
+        anchorX="left"
+        fillOpacity={op * 0.7}
+      >
+        正在被丢弃...
+      </Text>
+    </group>
+  );
+}
+
+// ─── 场景 ────────────────────────────────────────────────────
+function Scene({
+  f1,
+  f2,
+  f3,
+  mode,
+  yProgress,
+  showDecomp,
+}: {
+  f1: number;
+  f2: number;
+  f3: number;
+  mode: "3d" | "2d";
+  yProgress: number;
+  showDecomp: boolean;
+}) {
+  return (
+    <>
+      <ambientLight intensity={0.45} />
+      <pointLight position={[10, 12, 10]} intensity={1.1} />
+      <pointLight position={[-8, 6, -8]} intensity={0.4} color="#a78bfa" />
+
+      {mode === "2d" && (
+        <CameraRig progress={yProgress} active={mode === "2d"} />
+      )}
+
+      <Floor yProgress={yProgress} />
+      <CoordAxes yProgress={yProgress} />
+      <ProjectionLines f1={f1} f2={f2} f3={f3} yProgress={yProgress} />
+      <FeatureVectors
+        f1={f1}
+        f2={f2}
+        f3={f3}
+        yProgress={yProgress}
+        show={showDecomp}
+      />
+      <DataPoint f1={f1} f2={f2} f3={f3} yProgress={yProgress} />
+      <YLossLabel f3={f3} yProgress={yProgress} />
+
+      <OrbitControls enablePan enableZoom enableRotate={mode === "3d"} />
+    </>
+  );
+}
+
+// ─── 滑块组件 ────────────────────────────────────────────────
+function FeatureSlider({
+  label,
+  axisLabel,
+  color,
+  value,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  axisLabel: string;
+  color: string;
+  value: number;
+  onChange: (v: number) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div
+      className={`transition-opacity duration-300 ${disabled ? "opacity-30 pointer-events-none" : ""}`}
+    >
+      <div className="flex items-center gap-3 mb-2">
+        <div
+          className="w-2.5 h-2.5 rounded-full shrink-0"
+          style={{ background: color, boxShadow: `0 0 5px ${color}99` }}
+        />
+        <span className="text-xs font-semibold text-slate-200">{label}</span>
+        <span className="text-[10px] text-slate-500 font-mono">
+          → {axisLabel}
+        </span>
+        <span
+          className="ml-auto font-mono text-sm font-bold tabular-nums"
+          style={{ color }}
+        >
+          {value >= 0 ? "+" : ""}
+          {value.toFixed(2)}
+        </span>
+      </div>
+      <div className="flex items-center gap-2">
+        <span className="font-mono text-[10px] text-slate-600 w-5 text-right">
+          −5
+        </span>
+        <div className="flex-1">
+          <Slider
+            value={[value]}
+            onValueChange={([v]) => onChange(v)}
+            min={-5}
+            max={5}
+            step={0.05}
+            disabled={disabled}
+          />
+        </div>
+        <span className="font-mono text-[10px] text-slate-600 w-4">+5</span>
+      </div>
+      {/* 双向进度条 */}
+      <div className="mt-2 h-1 bg-[#1e293b] rounded-full overflow-hidden relative">
+        <div className="absolute inset-y-0 left-1/2 w-px bg-slate-600" />
+        <div
+          className="absolute top-0 h-full rounded-full transition-all duration-75"
+          style={{
+            background: color,
+            opacity: 0.55,
+            left: value >= 0 ? "50%" : `${((value + 5) / 10) * 100}%`,
+            width: `${(Math.abs(value) / 10) * 100}%`,
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ─── 主组件 ──────────────────────────────────────────────────
+export default function FeatureSpaceDemo() {
+  const [f1, setF1] = useState(2);
+  const [f2, setF2] = useState(2);
+  const [f3, setF3] = useState(3);
+  const [mode, setMode] = useState<"3d" | "2d">("3d");
+  const [yProgress, setYProgress] = useState(0);
+  const [showDecomp, setShowDecomp] = useState(true);
+  const animRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const target = mode === "2d" ? 1 : 0;
+    const tick = () => {
+      setYProgress((prev) => {
+        const diff = target - prev;
+        if (Math.abs(diff) < 0.003) return target;
+        return prev + diff * 0.055;
+      });
+      animRef.current = requestAnimationFrame(tick);
+    };
+    animRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (animRef.current) cancelAnimationFrame(animRef.current);
+    };
+  }, [mode]);
+
+  const phase = getPhase(yProgress);
+  const isAnimating = yProgress > 0.01 && yProgress < 0.99;
+  const eff3 = f3 * (1 - yProgress);
+
+  return (
+    <div
+      className="min-h-screen bg-[#0b0f18]"
+      style={{ fontFamily: "system-ui, sans-serif" }}
+    >
+      <div
+        className="max-w-7xl mx-auto p-4 flex flex-col gap-3"
+        style={{ minHeight: "100vh" }}
+      >
+        {/* 顶栏 */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-lg font-bold text-white tracking-tight">
+              特征值 = 空间坐标
+            </h1>
+            <p className="text-xs text-slate-500 mt-0.5">
+              拖动滑块改变特征值，观察点在空间中的位置变化
+            </p>
+          </div>
+          <div className="flex items-center gap-2 bg-[#131929] border border-slate-700 rounded-xl px-4 py-2 font-mono text-sm">
+            <span className="text-slate-500">q = [</span>
+            <span style={{ color: FEAT_COLORS.f1 }}>
+              {f1 >= 0 ? "+" : ""}
+              {f1.toFixed(2)}
             </span>
-            <div className="flex bg-slate-100 rounded-lg p-1">
-              {[2, 3, 4, 5].map((dim) => (
+            <span className="text-slate-600">,</span>
+            <span style={{ color: FEAT_COLORS.f2 }}>
+              {f2 >= 0 ? "+" : ""}
+              {f2.toFixed(2)}
+            </span>
+            <span className="text-slate-600">,</span>
+            <span
+              style={{
+                color: FEAT_COLORS.f3,
+                opacity: Math.max(0.3, 1 - yProgress * 0.8),
+              }}
+            >
+              {f3 >= 0 ? "+" : ""}
+              {f3.toFixed(2)}
+            </span>
+            <span className="text-slate-500">]</span>
+          </div>
+        </div>
+
+        {/* 主体 */}
+        <div className="flex gap-4 flex-1" style={{ minHeight: 0 }}>
+          {/* 左侧控制 */}
+          <div
+            className="w-68 shrink-0 flex flex-col gap-3"
+            style={{ width: 272 }}
+          >
+            {/* 特征值滑块 */}
+            <div className="bg-[#131929] border border-slate-700/60 rounded-2xl p-5 space-y-5">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">
+                  特征值
+                </span>
                 <button
-                  key={dim}
-                  onClick={() => handleDimensionChange(dim)}
-                  className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
-                    dimensions === dim
-                      ? "bg-white text-purple-600 shadow-sm"
-                      : "text-slate-600 hover:text-slate-800"
-                  }`}
+                  onClick={() => {
+                    setF1(0);
+                    setF2(0);
+                    setF3(0);
+                  }}
+                  className="text-[11px] text-slate-500 hover:text-slate-300 border border-slate-700 hover:border-slate-500 rounded-lg px-2 py-1 transition-all"
                 >
-                  {dim}D
+                  归零
                 </button>
-              ))}
-            </div>
-            <span className="text-xs text-slate-500 ml-2">
-              {dimensions > 3 ? `(${dimensions - 3}个隐藏维度投影到3D)` : ""}
-            </span>
-          </div>
-
-          {/* 3D可视化区域 */}
-          <div className="h-[500px] bg-slate-50 rounded-xl overflow-hidden mb-6 relative">
-            <Canvas camera={{ position: [8, 6, 8], fov: 50 }}>
-              <Scene
-                queryFeatures={currentFeatures}
-                highlightedAxis={highlightedAxis}
-                clusterA={clusterA.map((p) => p.slice(0, dimensions))}
-                clusterB={clusterB.map((p) => p.slice(0, dimensions))}
-                clusterC={clusterC.map((p) => p.slice(0, dimensions))}
-                centerA={centerA.slice(0, dimensions)}
-                centerB={centerB.slice(0, dimensions)}
-                centerC={centerC.slice(0, dimensions)}
-                nearestCluster={nearestCluster}
-                viewMode={viewMode}
-                dimensions={dimensions}
-                animationProgress={animationProgress}
+              </div>
+              <FeatureSlider
+                label="特征 1"
+                axisLabel="X 轴（左右）"
+                color={FEAT_COLORS.f1}
+                value={f1}
+                onChange={setF1}
               />
-            </Canvas>
-
-            {/* 维度转换动画提示 */}
-            {animationProgress > 0 && animationProgress < 1 && (
-              <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-black/70 text-white px-4 py-2 rounded-full text-sm">
-                {viewMode === "2d" ? "压缩 Z 轴..." : "展开 Z 轴..."}
-              </div>
-            )}
-          </div>
-
-          {/* 控制面板 */}
-          <div className="space-y-4">
-            {/* 特征滑块 - 动态生成 */}
-            <div className="grid grid-cols-2 gap-6">
-              {Array.from({ length: Math.min(dimensions, 3) }).map((_, i) => {
-                const dimConfig = DIMENSION_COLORS[i];
-                const isDisabled = viewMode === "2d" && i === 2;
-                const axisLabels = ["X", "Y", "Z"];
-
-                return (
-                  <div
-                    key={i}
-                    className={`flex items-center gap-4 transition-opacity duration-300 ${isDisabled ? "opacity-40 pointer-events-none" : ""}`}
-                  >
-                    <span
-                      className={`text-sm font-medium whitespace-nowrap transition-all duration-300 ${
-                        highlightedAxis?.axis === i
-                          ? `font-bold scale-110`
-                          : "text-slate-700"
-                      }`}
-                      style={{
-                        color:
-                          highlightedAxis?.axis === i
-                            ? dimConfig.color
-                            : undefined,
-                      }}
-                    >
-                      特征 {i + 1} ({axisLabels[i]})
-                    </span>
-                    <Slider
-                      value={[features[i]]}
-                      onValueChange={([v]) => handleFeatureChange(i, v)}
-                      min={-5}
-                      max={5}
-                      step={0.1}
-                      disabled={isDisabled}
-                      className="flex-1"
-                    />
-                    <Input
-                      type="number"
-                      value={features[i].toFixed(0)}
-                      onChange={(e) =>
-                        handleFeatureChange(i, parseFloat(e.target.value) || 0)
-                      }
-                      disabled={isDisabled}
-                      className={`w-16 text-center transition-all duration-300 ${
-                        highlightedAxis?.axis === i ? "ring-2" : ""
-                      }`}
-                      style={{
-                        borderColor:
-                          highlightedAxis?.axis === i
-                            ? dimConfig.color
-                            : undefined,
-                        boxShadow:
-                          highlightedAxis?.axis === i
-                            ? `0 0 0 2px ${dimConfig.lightColor}`
-                            : undefined,
-                      }}
-                    />
-                  </div>
-                );
-              })}
+              <FeatureSlider
+                label="特征 2"
+                axisLabel="Z 轴（前后）"
+                color={FEAT_COLORS.f2}
+                value={f2}
+                onChange={setF2}
+              />
+              <FeatureSlider
+                label="特征 3"
+                axisLabel="Y 轴（高度）"
+                color={FEAT_COLORS.f3}
+                value={f3}
+                onChange={setF3}
+                disabled={mode === "2d" && yProgress > 0.6}
+              />
+              {mode === "2d" && yProgress > 0.6 && (
+                <div className="text-[11px] text-orange-400 bg-orange-950/40 border border-orange-800/40 rounded-lg px-3 py-2 leading-relaxed">
+                  特征 3 已被忽略
+                  <br />
+                  <span className="text-orange-500/70">
+                    2D 投影中不存在第三个维度
+                  </span>
+                </div>
+              )}
             </div>
 
-            {/* 高维特征滑块（4D、5D） */}
-            {dimensions > 3 && (
-              <div className="border-t border-slate-200 pt-4 mt-4">
-                <p className="text-sm text-slate-500 mb-3">
-                  高维特征（投影到3D空间）
-                </p>
-                <div className="grid grid-cols-2 gap-6">
-                  {Array.from({ length: dimensions - 3 }).map((_, idx) => {
-                    const i = idx + 3;
-                    const dimConfig = DIMENSION_COLORS[i];
-                    const dimLabels = ["W", "V"];
-
-                    return (
-                      <div key={i} className="flex items-center gap-4">
-                        <span
-                          className={`text-sm font-medium whitespace-nowrap transition-all duration-300 ${
-                            highlightedAxis?.axis === i
-                              ? `font-bold scale-110`
-                              : "text-slate-700"
-                          }`}
-                          style={{
-                            color:
-                              highlightedAxis?.axis === i
-                                ? dimConfig.color
-                                : undefined,
-                          }}
-                        >
-                          特征 {i + 1} ({dimLabels[idx]})
-                        </span>
-                        <Slider
-                          value={[features[i]]}
-                          onValueChange={([v]) => handleFeatureChange(i, v)}
-                          min={-5}
-                          max={5}
-                          step={0.1}
-                          className="flex-1"
-                        />
-                        <Input
-                          type="number"
-                          value={features[i].toFixed(0)}
-                          onChange={(e) =>
-                            handleFeatureChange(
-                              i,
-                              parseFloat(e.target.value) || 0,
-                            )
-                          }
-                          className={`w-16 text-center transition-all duration-300`}
-                          style={{
-                            borderColor:
-                              highlightedAxis?.axis === i
-                                ? dimConfig.color
-                                : undefined,
-                            boxShadow:
-                              highlightedAxis?.axis === i
-                                ? `0 0 0 2px ${dimConfig.lightColor}`
-                                : undefined,
-                          }}
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* 视角模式和重置 */}
-            <div className="flex items-center justify-between pt-4 border-t border-slate-200">
-              <div className="flex items-center gap-4">
-                <span className="text-sm font-medium text-slate-700">
-                  视角模式
-                </span>
-                <div className="flex bg-slate-100 rounded-lg p-1">
+            {/* 视图模式 */}
+            <div className="bg-[#131929] border border-slate-700/60 rounded-2xl p-5">
+              <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-500 block mb-3">
+                视图
+              </span>
+              <div className="grid grid-cols-2 gap-2">
+                {(["3d", "2d"] as const).map((m) => (
                   <button
-                    onClick={() => setViewMode("3d")}
-                    className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                      viewMode === "3d"
-                        ? "bg-white text-blue-600 shadow-sm"
-                        : "text-slate-600 hover:text-slate-800"
+                    key={m}
+                    onClick={() => setMode(m)}
+                    className={`py-2.5 rounded-xl text-sm font-semibold transition-all ${
+                      mode === m
+                        ? "bg-white text-slate-900"
+                        : "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
                     }`}
                   >
-                    3D 空间
+                    {m === "3d" ? "3D 空间" : "2D 投影"}
                   </button>
-                  <button
-                    onClick={() => setViewMode("2d")}
-                    disabled={dimensions < 3}
-                    className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                      viewMode === "2d"
-                        ? "bg-white text-blue-600 shadow-sm"
-                        : "text-slate-600 hover:text-slate-800"
-                    } ${dimensions < 3 ? "opacity-50 cursor-not-allowed" : ""}`}
+                ))}
+              </div>
+              <p className="text-[11px] text-slate-600 mt-3 leading-relaxed">
+                {mode === "3d"
+                  ? "3 个特征值 → 3D 空间中的唯一位置"
+                  : "忽略特征 3 → 降到 2D，信息永久丢失"}
+              </p>
+            </div>
+
+            {/* 显示选项 */}
+            <div className="bg-[#131929] border border-slate-700/60 rounded-2xl p-5">
+              <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-500 block mb-3">
+                辅助线
+              </span>
+              <button
+                onClick={() => setShowDecomp((v) => !v)}
+                className="flex items-center gap-3 w-full"
+              >
+                <div
+                  className={`w-9 h-5 rounded-full transition-all relative ${showDecomp ? "bg-white" : "bg-slate-700"}`}
+                >
+                  <div
+                    className={`absolute top-0.5 w-4 h-4 rounded-full transition-all ${showDecomp ? "bg-slate-900 left-4" : "bg-slate-500 left-0.5"}`}
+                  />
+                </div>
+                <span className="text-sm text-slate-300">向量分解</span>
+              </button>
+            </div>
+
+            {/* 实时坐标 */}
+            <div className="bg-[#131929] border border-slate-700/60 rounded-2xl p-5">
+              <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-500 block mb-3">
+                实时坐标
+              </span>
+              <div className="space-y-3">
+                {[
+                  {
+                    label: "特征1 → X",
+                    color: FEAT_COLORS.f1,
+                    val: f1,
+                    eff: f1,
+                  },
+                  {
+                    label: "特征2 → Z",
+                    color: FEAT_COLORS.f2,
+                    val: f2,
+                    eff: f2,
+                  },
+                  {
+                    label: "特征3 → Y",
+                    color: FEAT_COLORS.f3,
+                    val: f3,
+                    eff: eff3,
+                    fading: true,
+                  },
+                ].map((item) => (
+                  <div key={item.label}>
+                    <div className="flex justify-between mb-1">
+                      <span
+                        className="text-[11px]"
+                        style={{ color: item.color }}
+                      >
+                        {item.label}
+                      </span>
+                      <span
+                        className="font-mono text-[11px] tabular-nums"
+                        style={{
+                          color: item.color,
+                          opacity: item.fading
+                            ? Math.max(0.3, 1 - yProgress)
+                            : 1,
+                        }}
+                      >
+                        {item.eff >= 0 ? "+" : ""}
+                        {item.eff.toFixed(3)}
+                      </span>
+                    </div>
+                    <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden relative">
+                      <div className="absolute inset-y-0 left-1/2 w-px bg-slate-600" />
+                      <div
+                        className="absolute top-0 h-full rounded-full transition-all duration-75"
+                        style={{
+                          background: item.color,
+                          opacity: item.fading
+                            ? Math.max(0.15, (1 - yProgress) * 0.8)
+                            : 0.75,
+                          left:
+                            item.eff >= 0
+                              ? "50%"
+                              : `${((item.eff + 5) / 10) * 100}%`,
+                          width: `${(Math.abs(item.eff) / 10) * 100}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* 右侧：Canvas */}
+          <div className="flex-1 flex flex-col gap-3 min-w-0">
+            {/* 阶段字幕 */}
+            <div style={{ minHeight: 56 }}>
+              {isAnimating && (
+                <div className="bg-[#131929] border border-amber-600/35 rounded-xl px-5 py-3">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="flex gap-1.5">
+                      {PHASES.map((_, i) => (
+                        <div
+                          key={i}
+                          className="h-1.5 rounded-full transition-all duration-300"
+                          style={{
+                            width: i === phase.index ? 28 : 8,
+                            background:
+                              i <= phase.index ? "#f59e0b" : "#1e293b",
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <span className="text-amber-400 text-xs font-semibold">
+                      {phase.label}
+                    </span>
+                    <span className="text-slate-400 text-xs">{phase.desc}</span>
+                  </div>
+                  <div className="h-0.5 bg-slate-800 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-amber-500 rounded-full transition-all duration-75"
+                      style={{ width: `${yProgress * 100}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Canvas 区域 */}
+            <div
+              className="flex-1 rounded-2xl overflow-hidden border border-slate-700/50 relative"
+              style={{ minHeight: 440, background: "#080c14" }}
+            >
+              <Canvas
+                camera={{ position: [9, 8, 9], fov: 48 }}
+                gl={{ antialias: true }}
+              >
+                <Scene
+                  f1={f1}
+                  f2={f2}
+                  f3={f3}
+                  mode={mode}
+                  yProgress={yProgress}
+                  showDecomp={showDecomp}
+                />
+              </Canvas>
+
+              {/* 图例 */}
+              <div className="absolute bottom-4 left-4 space-y-1">
+                {[
+                  {
+                    color: FEAT_COLORS.f1,
+                    text: "特征1（X 轴）",
+                    fading: false,
+                  },
+                  {
+                    color: FEAT_COLORS.f2,
+                    text: "特征2（Z 轴）",
+                    fading: false,
+                  },
+                  {
+                    color: FEAT_COLORS.f3,
+                    text: "特征3（Y 轴，被压缩）",
+                    fading: true,
+                  },
+                ].map((item) => (
+                  <div
+                    key={item.text}
+                    className="flex items-center gap-2 bg-black/50 backdrop-blur-sm rounded-lg px-2.5 py-1"
+                    style={{
+                      opacity: item.fading
+                        ? Math.max(0.3, 1 - yProgress * 0.8)
+                        : 1,
+                    }}
                   >
-                    2D 投影
-                  </button>
+                    <div
+                      className="w-2 h-2 rounded-full"
+                      style={{ background: item.color }}
+                    />
+                    <span className="text-[11px] font-mono text-slate-300">
+                      {item.text}
+                    </span>
+                  </div>
+                ))}
+                {showDecomp && (
+                  <div className="flex items-center gap-2 bg-black/50 backdrop-blur-sm rounded-lg px-2.5 py-1">
+                    <div className="w-4 h-0.5 bg-white opacity-30" />
+                    <span className="text-[11px] font-mono text-slate-500">
+                      合向量
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* 右上角维度标识 */}
+              <div className="absolute top-4 right-4 bg-black/50 backdrop-blur-sm rounded-xl px-3 py-2 text-right">
+                <div className="font-mono text-xs text-slate-500">
+                  {mode === "3d" ? "ℝ³ 空间" : "ℝ² 投影"}
+                </div>
+                <div className="font-mono text-2xl font-bold text-white">
+                  {mode === "3d" ? "3" : "2"} 维
                 </div>
               </div>
-              <Button
-                onClick={resetQueryPoint}
-                variant="secondary"
-                className="bg-slate-200 hover:bg-slate-300 text-slate-700"
-              >
-                重置查询点
-              </Button>
+            </div>
+
+            {/* 底部概念卡片 */}
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                {
+                  icon: "📍",
+                  title: "特征值 = 坐标",
+                  body: "特征1控制左右（X），特征2控制前后（Z），特征3控制高低（Y）。改变任意一个，点就会移动。",
+                },
+                {
+                  icon: "📐",
+                  title: "3 个特征 → 3D",
+                  body: "有多少特征值，就有多少维度。特征值的组合唯一确定这个点在空间中的位置。",
+                },
+                {
+                  icon: "🗜️",
+                  title: "降维 = 丢弃信息",
+                  body: "3D→2D 意味着忽略特征3。原本高低不同的两个点，投影后可能完全重叠，无法区分。",
+                },
+              ].map((card) => (
+                <div
+                  key={card.title}
+                  className="bg-[#131929] border border-slate-700/60 rounded-xl p-4"
+                >
+                  <div className="text-lg mb-1.5">{card.icon}</div>
+                  <div className="text-xs font-semibold text-white mb-1">
+                    {card.title}
+                  </div>
+                  <div className="text-[11px] text-slate-500 leading-relaxed">
+                    {card.body}
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </div>
