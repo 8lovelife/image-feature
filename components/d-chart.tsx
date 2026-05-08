@@ -1,92 +1,70 @@
 "use client";
 
-import { useState, useRef, useMemo, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { OrbitControls, Line, Text } from "@react-three/drei";
+import { OrbitControls, Line, Text, Html } from "@react-three/drei";
 import * as THREE from "three";
 import { Slider } from "@/components/ui/slider";
 
 // ─────────────────────────────────────────────────────────────
-// 坐标系说明（重要）：
-//   特征1 (f1) → Three.js X 轴（水平，向右）
-//   特征2 (f2) → Three.js Z 轴（水平，向前/后）
-//   特征3 (f3) → Three.js Y 轴（垂直，向上，降维时被压到0）
+// 坐标系：
+//   特征1 (f1) → X 轴（水平左右）
+//   特征2 (f2) → Z 轴（水平前后）
+//   特征3 (f3) → Y 轴（垂直高低，降维时压到 0）
 //
-// 这样俯视(top-down)时，X 水平、Z 垂直，网格完全正常。
+// 俯视时 X 水平、Z 垂直，gridHelper 天然正确。
 // ─────────────────────────────────────────────────────────────
 
-const easeInOut = (t: number) =>
+const easeIO = (t: number) =>
   t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
-const FEAT_COLORS = {
-  f1: "#f43f5e", // 特征1 → X → 红
-  f2: "#22d3ee", // 特征2 → Z → 青
-  f3: "#a78bfa", // 特征3 → Y → 紫（被压缩）
+const C = {
+  f1: "#f43f5e",
+  f2: "#22d3ee",
+  f3: "#a78bfa",
 };
 
-const PHASES = [
-  {
-    range: [0, 0.3] as [number, number],
-    label: "① 侧面观察",
-    desc: "从侧面看，能清楚看到点在「特征3」方向有多高",
-  },
-  {
-    range: [0.3, 0.65] as [number, number],
-    label: "② 压缩特征3",
-    desc: "特征3（Y 轴）正在被丢弃，注意高度竖线消失",
-  },
-  {
-    range: [0.65, 1.0] as [number, number],
-    label: "③ 俯视 2D",
-    desc: "从正上方俯视：只剩特征1（X）和特征2（Z）",
-  },
-];
-
-function getPhase(p: number) {
-  for (let i = 0; i < PHASES.length; i++) {
-    const [a, b] = PHASES[i].range;
-    if (p <= b)
-      return { ...PHASES[i], localT: Math.min(1, (p - a) / (b - a)), index: i };
+// 相机关键帧（progress 0=3D, 1=2D）
+// 3D home:  (10, 8, 10) — 经典斜视，三轴清晰
+// 侧视:     (1, 5, 18)  — 从侧面看 Y 高度
+// 俯视:     (0.01, 22, 0.01) — 正上方看 XZ 平面
+function camAt(p: number): [number, number, number] {
+  if (p <= 0) return [10, 8, 10];
+  if (p < 0.3) {
+    // 3D斜视 → 侧视
+    const t = easeIO(p / 0.3);
+    return [lerp(10, 1, t), lerp(8, 5, t), lerp(10, 18, t)];
   }
-  return { ...PHASES[PHASES.length - 1], localT: 1, index: PHASES.length - 1 };
+  if (p < 0.65) {
+    // 侧视，保持，观看 Y 被压扁
+    return [1, 5, 18];
+  }
+  if (p < 1) {
+    // 侧视 → 俯视
+    const t = easeIO((p - 0.65) / 0.35);
+    return [lerp(1, 0.01, t), lerp(5, 22, t), lerp(18, 8, t)];
+  }
+  return [0.01, 22, 8];
 }
 
-// ─── 相机控制器 ───────────────────────────────────────────────
-// 3D 默认：斜45度 (9, 8, 9) → 三轴都清晰
-// 阶段1：移到侧面 (0, 6, 16) → 能看到Y轴高度
-// 阶段2：保持侧面，看Y被压扁
-// 阶段3：升到正上方 (0, 20, 0.1) → 俯视XZ平面
+// ─── 相机控制器（始终挂载，双向动画）────────────────────────
+// progress 由父组件驱动（0↔1），CameraRig 负责所有相机运动
+// 动画中禁用 OrbitControls，静止时启用
 function CameraRig({
   progress,
-  active,
+  isAnimating,
 }: {
   progress: number;
-  active: boolean;
+  isAnimating: boolean;
 }) {
   const { camera } = useThree();
+  const targetRef = useRef(new THREE.Vector3(...camAt(progress)));
 
   useFrame(() => {
-    if (!active && progress === 0) return;
-    let tx: number, ty: number, tz: number;
-
-    if (progress < 0.3) {
-      const t = easeInOut(progress / 0.3);
-      tx = lerp(9, 0, t);
-      ty = lerp(8, 5, t);
-      tz = lerp(9, 18, t);
-    } else if (progress < 0.65) {
-      tx = 0;
-      ty = 5;
-      tz = 18;
-    } else {
-      const t = easeInOut((progress - 0.65) / 0.35);
-      tx = lerp(0, 0.01, t);
-      ty = lerp(5, 22, t);
-      tz = lerp(18, 0.01, t);
-    }
-
-    camera.position.lerp(new THREE.Vector3(tx, ty, tz), 0.06);
+    const [tx, ty, tz] = camAt(progress);
+    targetRef.current.set(tx, ty, tz);
+    camera.position.lerp(targetRef.current, isAnimating ? 0.065 : 0.08);
     camera.lookAt(0, 0, 0);
     camera.updateProjectionMatrix();
   });
@@ -95,184 +73,238 @@ function CameraRig({
 }
 
 // ─── 坐标轴 ──────────────────────────────────────────────────
-// X轴（特征1）、Z轴（特征2）永远可见
-// Y轴（特征3）随 yProgress 缩短消失
 function CoordAxes({ yProgress }: { yProgress: number }) {
-  const smoothY = useRef(1 - yProgress);
+  const ysRef = useRef(1 - yProgress);
   const [ys, setYs] = useState(1);
 
   useFrame(() => {
-    const target = 1 - yProgress;
-    smoothY.current += (target - smoothY.current) * 0.08;
-    setYs(smoothY.current);
+    ysRef.current += (1 - yProgress - ysRef.current) * 0.09;
+    setYs(ysRef.current);
   });
 
-  const len = 6;
-  const ticks = [-4, -3, -2, -1, 1, 2, 3, 4];
+  const LEN = 6;
+  const ticks = [-4, -2, 2, 4];
+  // distanceFactor 让 Html 标签大小跟随 3D 空间缩放，视角改变时保持视觉一致
+  const df = 12;
 
   return (
     <group>
-      {/* ── X 轴（特征1）── */}
+      {/* X 轴（特征1，红）*/}
       <Line
         points={[
-          [-len, 0, 0],
-          [len, 0, 0],
+          [-LEN, 0, 0],
+          [LEN, 0, 0],
         ]}
-        color={FEAT_COLORS.f1}
-        lineWidth={2.5}
+        color={C.f1}
+        lineWidth={3}
         transparent
-        opacity={0.85}
+        opacity={0.95}
       />
-      <Text
-        position={[len + 0.5, 0, 0]}
-        fontSize={0.4}
-        color={FEAT_COLORS.f1}
-        anchorX="center"
-        anchorY="middle"
+      <Html
+        position={[LEN + 1.0, 0, 0]}
+        center
+        distanceFactor={df}
+        style={{ pointerEvents: "none", userSelect: "none" }}
       >
-        X
-      </Text>
-      <Text
-        position={[len + 0.5, -0.55, 0]}
-        fontSize={0.22}
-        color={FEAT_COLORS.f1}
-        anchorX="center"
-        anchorY="middle"
-        fillOpacity={0.6}
-      >
-        特征1
-      </Text>
+        <div style={{ textAlign: "center", lineHeight: 1.2 }}>
+          <div
+            style={{
+              fontSize: 28,
+              fontWeight: 900,
+              color: C.f1,
+              textShadow: "0 0 8px #000, 0 0 16px #000",
+            }}
+          >
+            X
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              color: C.f1,
+              opacity: 0.85,
+              textShadow: "0 0 6px #000",
+            }}
+          >
+            特征1
+          </div>
+        </div>
+      </Html>
       {ticks.map((t) => (
         <group key={t} position={[t, 0, 0]}>
           <Line
             points={[
-              [0, 0, -0.1],
-              [0, 0, 0.1],
+              [0, 0, -0.15],
+              [0, 0, 0.15],
             ]}
-            color={FEAT_COLORS.f1}
-            lineWidth={1}
+            color={C.f1}
+            lineWidth={1.5}
             transparent
-            opacity={0.4}
+            opacity={0.5}
           />
-          <Text
-            position={[0, 0, 0.35]}
-            fontSize={0.18}
-            color={FEAT_COLORS.f1}
-            anchorX="center"
-            fillOpacity={0.4}
+          <Html
+            position={[0, 0, 0.55]}
+            center
+            distanceFactor={df}
+            style={{ pointerEvents: "none", userSelect: "none" }}
           >
-            {t}
-          </Text>
+            <div
+              style={{
+                fontSize: 11,
+                color: C.f1,
+                opacity: 0.6,
+                textShadow: "0 0 4px #000",
+              }}
+            >
+              {t}
+            </div>
+          </Html>
         </group>
       ))}
 
-      {/* ── Z 轴（特征2）── */}
+      {/* Z 轴（特征2，青）*/}
       <Line
         points={[
-          [0, 0, -len],
-          [0, 0, len],
+          [0, 0, -LEN],
+          [0, 0, LEN],
         ]}
-        color={FEAT_COLORS.f2}
-        lineWidth={2.5}
+        color={C.f2}
+        lineWidth={3}
         transparent
-        opacity={0.85}
+        opacity={0.95}
       />
-      <Text
-        position={[0, 0, len + 0.5]}
-        fontSize={0.4}
-        color={FEAT_COLORS.f2}
-        anchorX="center"
-        anchorY="middle"
+      <Html
+        position={[0, 0, LEN + 1.0]}
+        center
+        distanceFactor={df}
+        style={{ pointerEvents: "none", userSelect: "none" }}
       >
-        Z
-      </Text>
-      <Text
-        position={[0.55, 0, len + 0.5]}
-        fontSize={0.22}
-        color={FEAT_COLORS.f2}
-        anchorX="left"
-        anchorY="middle"
-        fillOpacity={0.6}
-      >
-        特征2
-      </Text>
+        <div style={{ textAlign: "center", lineHeight: 1.2 }}>
+          <div
+            style={{
+              fontSize: 28,
+              fontWeight: 900,
+              color: C.f2,
+              textShadow: "0 0 8px #000, 0 0 16px #000",
+            }}
+          >
+            Z
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              fontWeight: 600,
+              color: C.f2,
+              opacity: 0.85,
+              textShadow: "0 0 6px #000",
+            }}
+          >
+            特征2
+          </div>
+        </div>
+      </Html>
       {ticks.map((t) => (
         <group key={t} position={[0, 0, t]}>
           <Line
             points={[
-              [-0.1, 0, 0],
-              [0.1, 0, 0],
+              [-0.15, 0, 0],
+              [0.15, 0, 0],
             ]}
-            color={FEAT_COLORS.f2}
-            lineWidth={1}
+            color={C.f2}
+            lineWidth={1.5}
             transparent
-            opacity={0.4}
+            opacity={0.5}
           />
-          <Text
-            position={[0.35, 0, 0]}
-            fontSize={0.18}
-            color={FEAT_COLORS.f2}
-            anchorX="left"
-            fillOpacity={0.4}
+          <Html
+            position={[0.55, 0, 0]}
+            center
+            distanceFactor={df}
+            style={{ pointerEvents: "none", userSelect: "none" }}
           >
-            {t}
-          </Text>
+            <div
+              style={{
+                fontSize: 11,
+                color: C.f2,
+                opacity: 0.6,
+                textShadow: "0 0 4px #000",
+              }}
+            >
+              {t}
+            </div>
+          </Html>
         </group>
       ))}
 
-      {/* ── Y 轴（特征3，被压缩）── */}
-      {ys > 0.02 && (
+      {/* Y 轴（特征3，紫）— 随 yProgress 缩短 */}
+      {ys > 0.015 && (
         <>
           <Line
             points={[
               [0, 0, 0],
-              [0, len * ys, 0],
+              [0, LEN * ys, 0],
             ]}
-            color={FEAT_COLORS.f3}
+            color={C.f3}
             lineWidth={2.5}
             transparent
-            opacity={ys * 0.85}
+            opacity={Math.min(0.9, ys * 1.1)}
           />
           <Line
             points={[
-              [0, -len * ys * 0.3, 0],
+              [0, -LEN * ys * 0.25, 0],
               [0, 0, 0],
             ]}
-            color={FEAT_COLORS.f3}
-            lineWidth={1}
+            color={C.f3}
+            lineWidth={1.5}
             transparent
-            opacity={ys * 0.3}
+            opacity={ys * 0.35}
           />
-          <Text
-            position={[0, len * ys + 0.55, 0]}
-            fontSize={0.4 * Math.max(0.5, ys)}
-            color={FEAT_COLORS.f3}
-            anchorX="center"
-            anchorY="middle"
-            fillOpacity={ys}
+          {/* Y 标签放在轴顶端正上方，不与轴线重叠 */}
+          <Html
+            position={[0, LEN * ys + 0.8, 0]}
+            center
+            distanceFactor={df}
+            style={{ pointerEvents: "none", userSelect: "none" }}
           >
-            Y
-          </Text>
-          <Text
-            position={[0.55, len * ys + 0.55, 0]}
-            fontSize={0.22 * Math.max(0.5, ys)}
-            color={FEAT_COLORS.f3}
-            anchorX="left"
-            anchorY="middle"
-            fillOpacity={ys * 0.7}
-          >
-            特征3
-          </Text>
+            <div
+              style={{
+                textAlign: "center",
+                lineHeight: 1.2,
+                opacity: Math.min(1, ys * 1.5),
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 28,
+                  fontWeight: 900,
+                  color: C.f3,
+                  textShadow: "0 0 8px #000, 0 0 16px #000",
+                }}
+              >
+                Y
+              </div>
+              <div
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: C.f3,
+                  opacity: 0.85,
+                  textShadow: "0 0 6px #000",
+                }}
+              >
+                特征3
+              </div>
+            </div>
+          </Html>
           {ticks
-            .filter((t) => Math.abs(t) <= len * ys)
+            .filter((t) => t > 0 && t <= LEN * ys)
             .map((t) => (
               <group key={t} position={[0, t, 0]}>
                 <Line
                   points={[
-                    [-0.1, 0, 0],
-                    [0.1, 0, 0],
+                    [-0.12, 0, 0],
+                    [0.12, 0, 0],
                   ]}
-                  color={FEAT_COLORS.f3}
+                  color={C.f3}
                   lineWidth={1}
                   transparent
                   opacity={0.3 * ys}
@@ -284,45 +316,19 @@ function CoordAxes({ yProgress }: { yProgress: number }) {
 
       {/* 原点 */}
       <mesh>
-        <sphereGeometry args={[0.07, 16, 16]} />
-        <meshBasicMaterial color="#ffffff" />
+        <sphereGeometry args={[0.08, 16, 16]} />
+        <meshBasicMaterial color="#fff" />
       </mesh>
     </group>
   );
 }
 
-// ─── 地板网格（XZ平面，完全水平）────────────────────────────
-function Floor({ yProgress }: { yProgress: number }) {
-  const opacity = useRef(0);
-  const meshRef = useRef<THREE.Mesh>(null);
-
-  useFrame(() => {
-    opacity.current += (yProgress * 0.12 - opacity.current) * 0.06;
-    if (meshRef.current) {
-      (meshRef.current.material as THREE.MeshBasicMaterial).opacity =
-        opacity.current;
-    }
-  });
-
-  return (
-    <>
-      {/* gridHelper 默认就是 XZ 平面，完全正确 */}
-      <gridHelper args={[12, 24, "#334155", "#1e293b"]} />
-      <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[12, 12]} />
-        <meshBasicMaterial
-          color="#3b82f6"
-          transparent
-          opacity={0}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
-    </>
-  );
+// ─── 地板网格 ────────────────────────────────────────────────
+function Floor() {
+  return <gridHelper args={[12, 24, "#1e293b", "#1e293b"]} />;
 }
 
 // ─── 投影辅助线 ──────────────────────────────────────────────
-// f1→X, f2→Z, f3→Y（被压缩）
 function ProjectionLines({
   f1,
   f2,
@@ -334,84 +340,87 @@ function ProjectionLines({
   f3: number;
   yProgress: number;
 }) {
-  const effectiveY = f3 * (1 - yProgress);
+  const effYRef = useRef(f3);
+  const [effY, setEffY] = useState(f3);
+
+  useFrame(() => {
+    const target = f3 * (1 - yProgress);
+    effYRef.current += (target - effYRef.current) * 0.09;
+    setEffY(effYRef.current);
+  });
 
   return (
     <group>
-      {/* Y方向竖线（特征3的高度）—— 最重要，动画主角 */}
-      {Math.abs(effectiveY) > 0.05 && (
+      {/* 特征3 高度竖线 — 动画主角，从点垂直落到地面 */}
+      {Math.abs(effY) > 0.04 && (
         <Line
           points={[
-            [f1, effectiveY, f2],
+            [f1, effY, f2],
             [f1, 0, f2],
           ]}
-          color={FEAT_COLORS.f3}
-          lineWidth={2.5}
+          color={C.f3}
+          lineWidth={3}
           dashed
-          dashSize={0.14}
-          gapSize={0.07}
+          dashSize={0.15}
+          gapSize={0.08}
           transparent
-          opacity={(1 - yProgress) * 0.85}
+          opacity={Math.min(0.9, (1 - yProgress) * 1.1)}
         />
       )}
-
-      {/* X方向虚线（到ZY平面） */}
+      {/* 特征1 落到 X 轴的虚线 */}
       <Line
         points={[
           [f1, 0, f2],
           [0, 0, f2],
         ]}
-        color={FEAT_COLORS.f1}
+        color={C.f1}
         lineWidth={1.5}
         dashed
         dashSize={0.1}
         gapSize={0.06}
         transparent
-        opacity={0.45}
+        opacity={0.5}
       />
-
-      {/* Z方向虚线（到XY平面） */}
+      {/* 特征2 落到 Z 轴的虚线 */}
       <Line
         points={[
           [f1, 0, f2],
           [f1, 0, 0],
         ]}
-        color={FEAT_COLORS.f2}
+        color={C.f2}
         lineWidth={1.5}
         dashed
         dashSize={0.1}
         gapSize={0.06}
         transparent
-        opacity={0.45}
+        opacity={0.5}
       />
 
-      {/* XZ平面上的落点圆（Y投影结果）*/}
+      {/* X 轴落点 */}
+      <mesh position={[f1, 0, 0]}>
+        <sphereGeometry args={[0.09, 12, 12]} />
+        <meshBasicMaterial color={C.f1} transparent opacity={0.7} />
+      </mesh>
+      {/* Z 轴落点 */}
+      <mesh position={[0, 0, f2]}>
+        <sphereGeometry args={[0.09, 12, 12]} />
+        <meshBasicMaterial color={C.f2} transparent opacity={0.7} />
+      </mesh>
+      {/* XZ 平面投影落点（Y压缩完后才明显） */}
       <mesh position={[f1, 0.01, f2]} rotation={[-Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[0.15, 32]} />
+        <circleGeometry args={[0.18, 32]} />
         <meshBasicMaterial
-          color={FEAT_COLORS.f3}
+          color={C.f3}
           transparent
-          opacity={Math.min(0.7, yProgress * 0.9)}
+          opacity={Math.min(0.75, yProgress)}
           side={THREE.DoubleSide}
         />
-      </mesh>
-
-      {/* X轴落点 */}
-      <mesh position={[f1, 0, 0]}>
-        <sphereGeometry args={[0.08, 12, 12]} />
-        <meshBasicMaterial color={FEAT_COLORS.f1} transparent opacity={0.6} />
-      </mesh>
-
-      {/* Z轴落点 */}
-      <mesh position={[0, 0, f2]}>
-        <sphereGeometry args={[0.08, 12, 12]} />
-        <meshBasicMaterial color={FEAT_COLORS.f2} transparent opacity={0.6} />
       </mesh>
     </group>
   );
 }
 
-// ─── 向量分解线 ──────────────────────────────────────────────
+// ─── 向量分解箭头 ─────────────────────────────────────────────
 function FeatureVectors({
   f1,
   f2,
@@ -426,7 +435,7 @@ function FeatureVectors({
   show: boolean;
 }) {
   if (!show) return null;
-  const eff3 = f3 * (1 - yProgress);
+  const effY = f3 * (1 - yProgress);
   return (
     <group>
       <Line
@@ -434,42 +443,42 @@ function FeatureVectors({
           [0, 0, 0],
           [f1, 0, 0],
         ]}
-        color={FEAT_COLORS.f1}
-        lineWidth={3.5}
+        color={C.f1}
+        lineWidth={4}
         transparent
-        opacity={0.7}
+        opacity={0.75}
       />
       <Line
         points={[
           [f1, 0, 0],
           [f1, 0, f2],
         ]}
-        color={FEAT_COLORS.f2}
-        lineWidth={3.5}
+        color={C.f2}
+        lineWidth={4}
         transparent
-        opacity={0.7}
+        opacity={0.75}
       />
-      {Math.abs(eff3) > 0.05 && (
+      {Math.abs(effY) > 0.04 && (
         <Line
           points={[
             [f1, 0, f2],
-            [f1, eff3, f2],
+            [f1, effY, f2],
           ]}
-          color={FEAT_COLORS.f3}
-          lineWidth={3.5}
+          color={C.f3}
+          lineWidth={4}
           transparent
-          opacity={(1 - yProgress) * 0.7}
+          opacity={(1 - yProgress) * 0.75}
         />
       )}
       <Line
         points={[
           [0, 0, 0],
-          [f1, eff3, f2],
+          [f1, effY, f2],
         ]}
         color="#ffffff"
         lineWidth={1.5}
         transparent
-        opacity={0.3}
+        opacity={0.28}
       />
     </group>
   );
@@ -489,20 +498,20 @@ function DataPoint({
 }) {
   const meshRef = useRef<THREE.Mesh>(null);
   const glowRef = useRef<THREE.Mesh>(null);
-  const curY = useRef(f3);
+  const curY = useRef(f3 * (1 - yProgress));
 
   useFrame((state) => {
-    const targetY = f3 * (1 - yProgress);
-    curY.current += (targetY - curY.current) * 0.08;
+    const target = f3 * (1 - yProgress);
+    curY.current += (target - curY.current) * 0.09;
     if (meshRef.current) {
       meshRef.current.position.set(f1, curY.current, f2);
-      const sq = Math.max(0.06, 1 - yProgress * 0.94);
-      meshRef.current.scale.set(1 + (1 - sq) * 0.25, sq, 1 + (1 - sq) * 0.25);
+      const sq = Math.max(0.05, 1 - yProgress * 0.95);
+      meshRef.current.scale.set(1 + (1 - sq) * 0.3, sq, 1 + (1 - sq) * 0.3);
     }
     if (glowRef.current) {
       glowRef.current.position.set(f1, curY.current, f2);
-      const pulse = 1 + Math.sin(state.clock.elapsedTime * 2.2) * 0.1;
-      glowRef.current.scale.setScalar(pulse * 2.8);
+      const pulse = 1 + Math.sin(state.clock.elapsedTime * 2.5) * 0.12;
+      glowRef.current.scale.setScalar(pulse * 3);
     }
   });
 
@@ -510,75 +519,131 @@ function DataPoint({
     <group>
       <mesh ref={glowRef} position={[f1, f3, f2]}>
         <sphereGeometry args={[0.2, 16, 16]} />
-        <meshBasicMaterial color="#facc15" transparent opacity={0.07} />
+        <meshBasicMaterial color="#facc15" transparent opacity={0.06} />
       </mesh>
       <mesh ref={meshRef} position={[f1, f3, f2]}>
-        <sphereGeometry args={[0.2, 32, 32]} />
+        <sphereGeometry args={[0.22, 32, 32]} />
         <meshStandardMaterial
           color="#facc15"
           emissive="#facc15"
-          emissiveIntensity={0.4}
+          emissiveIntensity={0.45}
           roughness={0.1}
-          metalness={0.3}
+          metalness={0.2}
         />
       </mesh>
     </group>
   );
 }
 
-// ─── Y值丢失标注 ─────────────────────────────────────────────
-function YLossLabel({ f3, yProgress }: { f3: number; yProgress: number }) {
-  const visible = yProgress > 0.12 && yProgress < 0.9 && Math.abs(f3) > 0.2;
-  if (!visible) return null;
-  const curVal = f3 * (1 - yProgress);
-  const fadeIn = Math.min(1, (yProgress - 0.12) / 0.12);
-  const fadeOut = Math.min(1, (0.9 - yProgress) / 0.12);
-  const op = fadeIn * fadeOut;
+// ─── 幽灵点：展示信息丢失 ────────────────────────────────────
+// 2D 投影后，原来的 3D 位置变成半透明幽灵，地面出现实心投影点
+// 两者之间的连线 = 丢失的特征3信息（高度差）
+function GhostPoint({
+  f1,
+  f2,
+  f3,
+  yProgress,
+}: {
+  f1: number;
+  f2: number;
+  f3: number;
+  yProgress: number;
+}) {
+  const ghostRef = useRef<THREE.Mesh>(null);
+  const labelOpacity = Math.min(1, Math.max(0, (yProgress - 0.75) * 4));
+  const ghostOpacity = Math.min(0.35, Math.max(0, (yProgress - 0.7) * 1.2));
+
+  useFrame(() => {
+    if (ghostRef.current) {
+      // 幽灵点停在原始 f3 高度，不随压缩移动
+      ghostRef.current.position.set(f1, f3, f2);
+    }
+  });
+
+  if (yProgress < 0.7 || Math.abs(f3) < 0.1) return null;
+
   return (
-    <group position={[3.5, Math.max(0.3, curVal + 0.3), 0]}>
-      <Text fontSize={0.3} color="#fb923c" anchorX="left" fillOpacity={op}>
-        {`特征3 = ${curVal.toFixed(2)}`}
-      </Text>
-      <Text
-        position={[0, -0.45, 0]}
-        fontSize={0.22}
-        color="#fb923c"
-        anchorX="left"
-        fillOpacity={op * 0.7}
-      >
-        正在被丢弃...
-      </Text>
+    <group>
+      {/* 幽灵球：原来的 3D 位置 */}
+      <mesh ref={ghostRef} position={[f1, f3, f2]}>
+        <sphereGeometry args={[0.22, 32, 32]} />
+        <meshStandardMaterial
+          color="#facc15"
+          transparent
+          opacity={ghostOpacity}
+          wireframe={false}
+        />
+      </mesh>
+
+      {/* 幽灵→投影点的连线：视觉上表示"这段高度被丢弃了" */}
+      <Line
+        points={[
+          [f1, f3, f2],
+          [f1, 0.01, f2],
+        ]}
+        color="#f97316"
+        lineWidth={2}
+        dashed
+        dashSize={0.12}
+        gapSize={0.08}
+        transparent
+        opacity={Math.min(0.8, ghostOpacity * 3)}
+      />
+
+      {/* 连线中点的 Html 标注 */}
+      {labelOpacity > 0.05 && (
+        <Html
+          position={[f1 + 0.5, f3 / 2, f2]}
+          style={{ pointerEvents: "none", userSelect: "none" }}
+        >
+          <div
+            style={{
+              background: "rgba(0,0,0,0.75)",
+              border: "1px solid #f9731688",
+              borderRadius: 8,
+              padding: "5px 10px",
+              opacity: labelOpacity,
+              whiteSpace: "nowrap",
+            }}
+          >
+            <div style={{ fontSize: 11, color: "#fb923c", fontWeight: 700 }}>
+              特征3 = {f3.toFixed(2)} → 丢失
+            </div>
+            <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>
+              这段高度在 2D 中不存在
+            </div>
+          </div>
+        </Html>
+      )}
     </group>
   );
 }
 
-// ─── 场景 ────────────────────────────────────────────────────
 function Scene({
   f1,
   f2,
   f3,
-  mode,
   yProgress,
+  isAnimating,
   showDecomp,
 }: {
   f1: number;
   f2: number;
   f3: number;
-  mode: "3d" | "2d";
   yProgress: number;
+  isAnimating: boolean;
   showDecomp: boolean;
 }) {
   return (
     <>
-      <ambientLight intensity={0.45} />
-      <pointLight position={[10, 12, 10]} intensity={1.1} />
+      <ambientLight intensity={0.5} />
+      <pointLight position={[10, 14, 10]} intensity={1.0} />
       <pointLight position={[-8, 6, -8]} intensity={0.4} color="#a78bfa" />
 
-      {mode === "2d" && (
-        <CameraRig progress={yProgress} active={mode === "2d"} />
-      )}
+      {/* 相机始终由 CameraRig 控制 */}
+      <CameraRig progress={yProgress} isAnimating={isAnimating} />
 
-      <Floor yProgress={yProgress} />
+      <Floor />
       <CoordAxes yProgress={yProgress} />
       <ProjectionLines f1={f1} f2={f2} f3={f3} yProgress={yProgress} />
       <FeatureVectors
@@ -589,24 +654,83 @@ function Scene({
         show={showDecomp}
       />
       <DataPoint f1={f1} f2={f2} f3={f3} yProgress={yProgress} />
-      <YLossLabel f3={f3} yProgress={yProgress} />
+      <GhostPoint f1={f1} f2={f2} f3={f3} yProgress={yProgress} />
 
-      <OrbitControls enablePan enableZoom enableRotate={mode === "3d"} />
+      {/* 动画时禁用 OrbitControls，静止时启用 */}
+      <OrbitControls
+        enabled={!isAnimating}
+        enablePan={true}
+        enableZoom={true}
+        enableRotate={true}
+        makeDefault
+      />
     </>
   );
 }
 
-// ─── 滑块组件 ────────────────────────────────────────────────
-function FeatureSlider({
+// ─── 阶段说明 ─────────────────────────────────────────────────
+const PHASES_3TO2 = [
+  {
+    range: [0, 0.3] as [number, number],
+    label: "① 移到侧面",
+    desc: "侧视角，能清楚看到特征3（Y轴）有多高",
+  },
+  {
+    range: [0.3, 0.65] as [number, number],
+    label: "② 压缩特征3",
+    desc: "Y 轴缩短，点的高度归零，紫色竖线消失",
+  },
+  {
+    range: [0.65, 1.0] as [number, number],
+    label: "③ 升至俯视",
+    desc: "正上方俯视 XZ 平面 = 2D 投影完成",
+  },
+];
+const PHASES_2TO3 = [
+  {
+    range: [0, 0.35] as [number, number],
+    label: "① 下降视角",
+    desc: "从俯视下降，Z 轴（特征2）开始出现",
+  },
+  {
+    range: [0.35, 0.7] as [number, number],
+    label: "② 恢复特征3",
+    desc: "Y 轴伸展，点从地面升起，特征3 重新出现",
+  },
+  {
+    range: [0.7, 1.0] as [number, number],
+    label: "③ 回到 3D",
+    desc: "三轴完整，特征1/2/3 全部可见",
+  },
+];
+
+function getPhaseInfo(p: number, to2D: boolean) {
+  const phases = to2D ? PHASES_3TO2 : PHASES_2TO3;
+  // 2→3 时 p 从 1 降到 0，用 1-p 查找
+  const lookup = to2D ? p : 1 - p;
+  for (let i = 0; i < phases.length; i++) {
+    const [a, b] = phases[i].range;
+    if (lookup <= b + 0.001)
+      return { ...phases[i], index: i, total: phases.length };
+  }
+  return {
+    ...phases[phases.length - 1],
+    index: phases.length - 1,
+    total: phases.length,
+  };
+}
+
+// ─── 滑块 ────────────────────────────────────────────────────
+function FSlider({
   label,
-  axisLabel,
+  sub,
   color,
   value,
   onChange,
   disabled,
 }: {
   label: string;
-  axisLabel: string;
+  sub: string;
   color: string;
   value: number;
   onChange: (v: number) => void;
@@ -614,17 +738,15 @@ function FeatureSlider({
 }) {
   return (
     <div
-      className={`transition-opacity duration-300 ${disabled ? "opacity-30 pointer-events-none" : ""}`}
+      className={`transition-opacity duration-500 ${disabled ? "opacity-25 pointer-events-none" : ""}`}
     >
-      <div className="flex items-center gap-3 mb-2">
+      <div className="flex items-center gap-2.5 mb-2">
         <div
           className="w-2.5 h-2.5 rounded-full shrink-0"
-          style={{ background: color, boxShadow: `0 0 5px ${color}99` }}
+          style={{ background: color, boxShadow: `0 0 6px ${color}88` }}
         />
         <span className="text-xs font-semibold text-slate-200">{label}</span>
-        <span className="text-[10px] text-slate-500 font-mono">
-          → {axisLabel}
-        </span>
+        <span className="text-[10px] text-slate-600 font-mono ml-1">{sub}</span>
         <span
           className="ml-auto font-mono text-sm font-bold tabular-nums"
           style={{ color }}
@@ -634,31 +756,33 @@ function FeatureSlider({
         </span>
       </div>
       <div className="flex items-center gap-2">
-        <span className="font-mono text-[10px] text-slate-600 w-5 text-right">
+        <span className="font-mono text-[10px] text-slate-700 w-5 text-right shrink-0">
           −5
         </span>
-        <div className="flex-1">
-          <Slider
-            value={[value]}
-            onValueChange={([v]) => onChange(v)}
-            min={-5}
-            max={5}
-            step={0.05}
-            disabled={disabled}
-          />
-        </div>
-        <span className="font-mono text-[10px] text-slate-600 w-4">+5</span>
+        <Slider
+          value={[value]}
+          onValueChange={([v]) => onChange(v)}
+          min={-5}
+          max={5}
+          step={0.05}
+          disabled={disabled}
+          className="flex-1"
+        />
+        <span className="font-mono text-[10px] text-slate-700 w-5 shrink-0">
+          +5
+        </span>
       </div>
       {/* 双向进度条 */}
-      <div className="mt-2 h-1 bg-[#1e293b] rounded-full overflow-hidden relative">
+      <div className="mt-2 h-1 bg-slate-800 rounded-full overflow-hidden relative">
         <div className="absolute inset-y-0 left-1/2 w-px bg-slate-600" />
         <div
-          className="absolute top-0 h-full rounded-full transition-all duration-75"
+          className="absolute top-0 h-full rounded-full"
           style={{
             background: color,
-            opacity: 0.55,
+            opacity: 0.6,
             left: value >= 0 ? "50%" : `${((value + 5) / 10) * 100}%`,
             width: `${(Math.abs(value) / 10) * 100}%`,
+            transition: "width 75ms, left 75ms",
           }}
         />
       </div>
@@ -668,21 +792,24 @@ function FeatureSlider({
 
 // ─── 主组件 ──────────────────────────────────────────────────
 export default function FeatureSpaceDemo() {
-  const [f1, setF1] = useState(2);
+  const [f1, setF1] = useState(2.5);
   const [f2, setF2] = useState(2);
   const [f3, setF3] = useState(3);
   const [mode, setMode] = useState<"3d" | "2d">("3d");
-  const [yProgress, setYProgress] = useState(0);
+  const [yProgress, setYProgress] = useState(0); // 0 = 3D, 1 = 2D
   const [showDecomp, setShowDecomp] = useState(true);
   const animRef = useRef<number | null>(null);
+  const dirRef = useRef<"to2d" | "to3d">("to2d");
 
+  // 动画驱动 — 双向，慢速
   useEffect(() => {
     const target = mode === "2d" ? 1 : 0;
+    dirRef.current = mode === "2d" ? "to2d" : "to3d";
     const tick = () => {
       setYProgress((prev) => {
         const diff = target - prev;
-        if (Math.abs(diff) < 0.003) return target;
-        return prev + diff * 0.055;
+        if (Math.abs(diff) < 0.002) return target;
+        return prev + diff * 0.05;
       });
       animRef.current = requestAnimationFrame(tick);
     };
@@ -692,13 +819,19 @@ export default function FeatureSpaceDemo() {
     };
   }, [mode]);
 
-  const phase = getPhase(yProgress);
-  const isAnimating = yProgress > 0.01 && yProgress < 0.99;
-  const eff3 = f3 * (1 - yProgress);
+  const isAnimating = yProgress > 0.005 && yProgress < 0.995;
+  const to2D = dirRef.current === "to2d";
+  const phase = isAnimating ? getPhaseInfo(yProgress, to2D) : null;
+
+  // 实时有效特征3值（动画中变化）
+  const [dispF3, setDispF3] = useState(f3);
+  useEffect(() => {
+    setDispF3(f3 * (1 - yProgress));
+  }, [f3, yProgress]);
 
   return (
     <div
-      className="min-h-screen bg-[#0b0f18]"
+      className="min-h-screen bg-[#08090f]"
       style={{ fontFamily: "system-ui, sans-serif" }}
     >
       <div
@@ -708,47 +841,41 @@ export default function FeatureSpaceDemo() {
         {/* 顶栏 */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-lg font-bold text-white tracking-tight">
-              特征值 = 空间坐标
-            </h1>
+            <h1 className="text-lg font-bold text-white">特征值 = 空间坐标</h1>
             <p className="text-xs text-slate-500 mt-0.5">
               拖动滑块改变特征值，观察点在空间中的位置变化
             </p>
           </div>
-          <div className="flex items-center gap-2 bg-[#131929] border border-slate-700 rounded-xl px-4 py-2 font-mono text-sm">
-            <span className="text-slate-500">q = [</span>
-            <span style={{ color: FEAT_COLORS.f1 }}>
+          <div className="flex items-center gap-2 bg-[#12151f] border border-slate-700/80 rounded-xl px-4 py-2.5 font-mono text-sm">
+            <span className="text-slate-600">q&nbsp;=&nbsp;[</span>
+            <span style={{ color: C.f1 }}>
               {f1 >= 0 ? "+" : ""}
               {f1.toFixed(2)}
             </span>
-            <span className="text-slate-600">,</span>
-            <span style={{ color: FEAT_COLORS.f2 }}>
+            <span className="text-slate-600">,&nbsp;</span>
+            <span style={{ color: C.f2 }}>
               {f2 >= 0 ? "+" : ""}
               {f2.toFixed(2)}
             </span>
-            <span className="text-slate-600">,</span>
+            <span className="text-slate-600">,&nbsp;</span>
             <span
               style={{
-                color: FEAT_COLORS.f3,
-                opacity: Math.max(0.3, 1 - yProgress * 0.8),
+                color: C.f3,
+                opacity: Math.max(0.25, 1 - yProgress * 0.85),
               }}
             >
-              {f3 >= 0 ? "+" : ""}
-              {f3.toFixed(2)}
+              {dispF3 >= 0 ? "+" : ""}
+              {dispF3.toFixed(2)}
             </span>
-            <span className="text-slate-500">]</span>
+            <span className="text-slate-600">]</span>
           </div>
         </div>
 
         {/* 主体 */}
         <div className="flex gap-4 flex-1" style={{ minHeight: 0 }}>
-          {/* 左侧控制 */}
-          <div
-            className="w-68 shrink-0 flex flex-col gap-3"
-            style={{ width: 272 }}
-          >
-            {/* 特征值滑块 */}
-            <div className="bg-[#131929] border border-slate-700/60 rounded-2xl p-5 space-y-5">
+          {/* ── 左侧控制面板 ── */}
+          <div className="flex flex-col gap-3" style={{ width: 268 }}>
+            <div className="bg-[#12151f] border border-slate-700/60 rounded-2xl p-5 space-y-5">
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">
                   特征值
@@ -759,58 +886,74 @@ export default function FeatureSpaceDemo() {
                     setF2(0);
                     setF3(0);
                   }}
-                  className="text-[11px] text-slate-500 hover:text-slate-300 border border-slate-700 hover:border-slate-500 rounded-lg px-2 py-1 transition-all"
+                  className="text-[11px] text-slate-600 hover:text-slate-300 border border-slate-700 hover:border-slate-500 rounded-lg px-2 py-1 transition-all"
                 >
                   归零
                 </button>
               </div>
-              <FeatureSlider
+              <FSlider
                 label="特征 1"
-                axisLabel="X 轴（左右）"
-                color={FEAT_COLORS.f1}
+                sub="→ X 轴（左右）"
+                color={C.f1}
                 value={f1}
                 onChange={setF1}
               />
-              <FeatureSlider
+              <FSlider
                 label="特征 2"
-                axisLabel="Z 轴（前后）"
-                color={FEAT_COLORS.f2}
+                sub="→ Z 轴（前后）"
+                color={C.f2}
                 value={f2}
                 onChange={setF2}
               />
-              <FeatureSlider
+              <FSlider
                 label="特征 3"
-                axisLabel="Y 轴（高度）"
-                color={FEAT_COLORS.f3}
+                sub="→ Y 轴（高低）"
+                color={C.f3}
                 value={f3}
                 onChange={setF3}
-                disabled={mode === "2d" && yProgress > 0.6}
+                disabled={mode === "2d" && yProgress > 0.7}
               />
-              {mode === "2d" && yProgress > 0.6 && (
-                <div className="text-[11px] text-orange-400 bg-orange-950/40 border border-orange-800/40 rounded-lg px-3 py-2 leading-relaxed">
-                  特征 3 已被忽略
-                  <br />
-                  <span className="text-orange-500/70">
-                    2D 投影中不存在第三个维度
-                  </span>
+              {mode === "2d" && yProgress > 0.7 && (
+                <div className="text-[11px] bg-orange-950/30 border border-orange-900/40 rounded-xl px-3 py-2.5 leading-relaxed space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-yellow-400 opacity-30 shrink-0" />
+                    <span className="text-slate-400">
+                      幽灵点 = 原来的 3D 位置
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-yellow-400 shrink-0" />
+                    <span className="text-slate-400">
+                      实心点 = 2D 投影后的位置
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-0.5 border-t-2 border-dashed border-orange-400 shrink-0" />
+                    <span className="text-orange-400 font-medium">
+                      橙色虚线 = 丢失的特征3高度
+                    </span>
+                  </div>
+                  <div className="text-slate-500 pt-1 border-t border-slate-800">
+                    不同高度的点，投影后可能完全重叠
+                  </div>
                 </div>
               )}
             </div>
 
-            {/* 视图模式 */}
-            <div className="bg-[#131929] border border-slate-700/60 rounded-2xl p-5">
+            {/* 视图切换 */}
+            <div className="bg-[#12151f] border border-slate-700/60 rounded-2xl p-5">
               <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-500 block mb-3">
-                视图
+                视图模式
               </span>
               <div className="grid grid-cols-2 gap-2">
                 {(["3d", "2d"] as const).map((m) => (
                   <button
                     key={m}
                     onClick={() => setMode(m)}
-                    className={`py-2.5 rounded-xl text-sm font-semibold transition-all ${
+                    className={`py-3 rounded-xl text-sm font-bold transition-all duration-200 ${
                       mode === m
-                        ? "bg-white text-slate-900"
-                        : "bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
+                        ? "bg-white text-slate-900 shadow-lg"
+                        : "bg-slate-800/80 text-slate-400 hover:bg-slate-700 hover:text-slate-200"
                     }`}
                   >
                     {m === "3d" ? "3D 空间" : "2D 投影"}
@@ -819,22 +962,22 @@ export default function FeatureSpaceDemo() {
               </div>
               <p className="text-[11px] text-slate-600 mt-3 leading-relaxed">
                 {mode === "3d"
-                  ? "3 个特征值 → 3D 空间中的唯一位置"
-                  : "忽略特征 3 → 降到 2D，信息永久丢失"}
+                  ? "三个特征值完整定义点在 3D 空间的位置"
+                  : "忽略特征3 → 降至 2D，高度信息永久丢失"}
               </p>
             </div>
 
-            {/* 显示选项 */}
-            <div className="bg-[#131929] border border-slate-700/60 rounded-2xl p-5">
+            {/* 辅助线开关 */}
+            <div className="bg-[#12151f] border border-slate-700/60 rounded-2xl p-5">
               <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-500 block mb-3">
-                辅助线
+                辅助显示
               </span>
               <button
                 onClick={() => setShowDecomp((v) => !v)}
                 className="flex items-center gap-3 w-full"
               >
                 <div
-                  className={`w-9 h-5 rounded-full transition-all relative ${showDecomp ? "bg-white" : "bg-slate-700"}`}
+                  className={`w-9 h-5 rounded-full transition-colors relative ${showDecomp ? "bg-white" : "bg-slate-700"}`}
                 >
                   <div
                     className={`absolute top-0.5 w-4 h-4 rounded-full transition-all ${showDecomp ? "bg-slate-900 left-4" : "bg-slate-500 left-0.5"}`}
@@ -842,36 +985,35 @@ export default function FeatureSpaceDemo() {
                 </div>
                 <span className="text-sm text-slate-300">向量分解</span>
               </button>
+              <p className="text-[11px] text-slate-600 mt-2 leading-relaxed">
+                显示每个特征值对应的坐标分量
+              </p>
             </div>
 
             {/* 实时坐标 */}
-            <div className="bg-[#131929] border border-slate-700/60 rounded-2xl p-5">
+            <div className="bg-[#12151f] border border-slate-700/60 rounded-2xl p-5">
               <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-500 block mb-3">
                 实时坐标
               </span>
               <div className="space-y-3">
                 {[
-                  {
-                    label: "特征1 → X",
-                    color: FEAT_COLORS.f1,
-                    val: f1,
-                    eff: f1,
-                  },
-                  {
-                    label: "特征2 → Z",
-                    color: FEAT_COLORS.f2,
-                    val: f2,
-                    eff: f2,
-                  },
+                  { label: "特征1 → X", color: C.f1, eff: f1, fading: false },
+                  { label: "特征2 → Z", color: C.f2, eff: f2, fading: false },
                   {
                     label: "特征3 → Y",
-                    color: FEAT_COLORS.f3,
-                    val: f3,
-                    eff: eff3,
+                    color: C.f3,
+                    eff: dispF3,
                     fading: true,
                   },
                 ].map((item) => (
-                  <div key={item.label}>
+                  <div
+                    key={item.label}
+                    style={{
+                      opacity: item.fading
+                        ? Math.max(0.2, 1 - yProgress * 0.9)
+                        : 1,
+                    }}
+                  >
                     <div className="flex justify-between mb-1">
                       <span
                         className="text-[11px]"
@@ -881,31 +1023,25 @@ export default function FeatureSpaceDemo() {
                       </span>
                       <span
                         className="font-mono text-[11px] tabular-nums"
-                        style={{
-                          color: item.color,
-                          opacity: item.fading
-                            ? Math.max(0.3, 1 - yProgress)
-                            : 1,
-                        }}
+                        style={{ color: item.color }}
                       >
                         {item.eff >= 0 ? "+" : ""}
                         {item.eff.toFixed(3)}
                       </span>
                     </div>
                     <div className="h-1.5 bg-slate-800 rounded-full overflow-hidden relative">
-                      <div className="absolute inset-y-0 left-1/2 w-px bg-slate-600" />
+                      <div className="absolute inset-y-0 left-1/2 w-px bg-slate-700" />
                       <div
-                        className="absolute top-0 h-full rounded-full transition-all duration-75"
+                        className="absolute top-0 h-full rounded-full"
                         style={{
                           background: item.color,
-                          opacity: item.fading
-                            ? Math.max(0.15, (1 - yProgress) * 0.8)
-                            : 0.75,
+                          opacity: 0.7,
                           left:
                             item.eff >= 0
                               ? "50%"
                               : `${((item.eff + 5) / 10) * 100}%`,
                           width: `${(Math.abs(item.eff) / 10) * 100}%`,
+                          transition: "width 80ms, left 80ms",
                         }}
                       />
                     </div>
@@ -915,90 +1051,45 @@ export default function FeatureSpaceDemo() {
             </div>
           </div>
 
-          {/* 右侧：Canvas */}
+          {/* ── 右侧 Canvas ── */}
           <div className="flex-1 flex flex-col gap-3 min-w-0">
-            {/* 阶段字幕 */}
-            <div style={{ minHeight: 56 }}>
-              {isAnimating && (
-                <div className="bg-[#131929] border border-amber-600/35 rounded-xl px-5 py-3">
-                  <div className="flex items-center gap-3 mb-2">
-                    <div className="flex gap-1.5">
-                      {PHASES.map((_, i) => (
-                        <div
-                          key={i}
-                          className="h-1.5 rounded-full transition-all duration-300"
-                          style={{
-                            width: i === phase.index ? 28 : 8,
-                            background:
-                              i <= phase.index ? "#f59e0b" : "#1e293b",
-                          }}
-                        />
-                      ))}
-                    </div>
-                    <span className="text-amber-400 text-xs font-semibold">
-                      {phase.label}
-                    </span>
-                    <span className="text-slate-400 text-xs">{phase.desc}</span>
-                  </div>
-                  <div className="h-0.5 bg-slate-800 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-amber-500 rounded-full transition-all duration-75"
-                      style={{ width: `${yProgress * 100}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Canvas 区域 */}
+            {/* Canvas */}
             <div
               className="flex-1 rounded-2xl overflow-hidden border border-slate-700/50 relative"
-              style={{ minHeight: 440, background: "#080c14" }}
+              style={{ minHeight: 440, background: "#060810" }}
             >
               <Canvas
-                camera={{ position: [9, 8, 9], fov: 48 }}
+                camera={{ position: [10, 8, 10], fov: 48 }}
                 gl={{ antialias: true }}
               >
                 <Scene
                   f1={f1}
                   f2={f2}
                   f3={f3}
-                  mode={mode}
                   yProgress={yProgress}
+                  isAnimating={isAnimating}
                   showDecomp={showDecomp}
                 />
               </Canvas>
 
               {/* 图例 */}
-              <div className="absolute bottom-4 left-4 space-y-1">
+              <div className="absolute bottom-4 left-4 space-y-1.5">
                 {[
-                  {
-                    color: FEAT_COLORS.f1,
-                    text: "特征1（X 轴）",
-                    fading: false,
-                  },
-                  {
-                    color: FEAT_COLORS.f2,
-                    text: "特征2（Z 轴）",
-                    fading: false,
-                  },
-                  {
-                    color: FEAT_COLORS.f3,
-                    text: "特征3（Y 轴，被压缩）",
-                    fading: true,
-                  },
+                  { color: C.f1, text: "特征1 → X 轴（左右）", dim: false },
+                  { color: C.f2, text: "特征2 → Z 轴（前后）", dim: false },
+                  { color: C.f3, text: "特征3 → Y 轴（高低）", dim: true },
                 ].map((item) => (
                   <div
                     key={item.text}
-                    className="flex items-center gap-2 bg-black/50 backdrop-blur-sm rounded-lg px-2.5 py-1"
+                    className="flex items-center gap-2 bg-black/55 backdrop-blur-sm rounded-lg px-2.5 py-1"
                     style={{
-                      opacity: item.fading
-                        ? Math.max(0.3, 1 - yProgress * 0.8)
+                      opacity: item.dim
+                        ? Math.max(0.25, 1 - yProgress * 0.85)
                         : 1,
                     }}
                   >
                     <div
-                      className="w-2 h-2 rounded-full"
+                      className="w-2 h-2 rounded-full shrink-0"
                       style={{ background: item.color }}
                     />
                     <span className="text-[11px] font-mono text-slate-300">
@@ -1007,24 +1098,37 @@ export default function FeatureSpaceDemo() {
                   </div>
                 ))}
                 {showDecomp && (
-                  <div className="flex items-center gap-2 bg-black/50 backdrop-blur-sm rounded-lg px-2.5 py-1">
-                    <div className="w-4 h-0.5 bg-white opacity-30" />
+                  <div className="flex items-center gap-2 bg-black/55 backdrop-blur-sm rounded-lg px-2.5 py-1">
+                    <div className="w-4 h-px bg-white opacity-30" />
                     <span className="text-[11px] font-mono text-slate-500">
-                      合向量
+                      合向量（原点→点）
                     </span>
                   </div>
                 )}
               </div>
 
-              {/* 右上角维度标识 */}
-              <div className="absolute top-4 right-4 bg-black/50 backdrop-blur-sm rounded-xl px-3 py-2 text-right">
-                <div className="font-mono text-xs text-slate-500">
+              {/* 右上角维度标 */}
+              <div className="absolute top-4 right-4 bg-black/55 backdrop-blur-sm rounded-xl px-3 py-2 text-right">
+                <div className="font-mono text-[10px] text-slate-500">
                   {mode === "3d" ? "ℝ³ 空间" : "ℝ² 投影"}
                 </div>
-                <div className="font-mono text-2xl font-bold text-white">
-                  {mode === "3d" ? "3" : "2"} 维
+                <div className="font-mono text-2xl font-black text-white leading-tight">
+                  {mode === "3d" ? "3" : "2"}
+                  <span className="text-sm font-normal text-slate-400">
+                    {" "}
+                    维
+                  </span>
                 </div>
               </div>
+
+              {/* 静止时提示 */}
+              {!isAnimating && (
+                <div className="absolute bottom-4 right-4 bg-black/55 backdrop-blur-sm rounded-lg px-3 py-1.5">
+                  <span className="text-[11px] text-slate-500">
+                    静止时可旋转视角
+                  </span>
+                </div>
+              )}
             </div>
 
             {/* 底部概念卡片 */}
@@ -1033,24 +1137,24 @@ export default function FeatureSpaceDemo() {
                 {
                   icon: "📍",
                   title: "特征值 = 坐标",
-                  body: "特征1控制左右（X），特征2控制前后（Z），特征3控制高低（Y）。改变任意一个，点就会移动。",
+                  body: "特征1控制左右（X），特征2控制前后（Z），特征3控制高低（Y）。改变任意一个，点立刻移动。",
                 },
                 {
                   icon: "📐",
-                  title: "3 个特征 → 3D",
-                  body: "有多少特征值，就有多少维度。特征值的组合唯一确定这个点在空间中的位置。",
+                  title: "N 个特征 → N 维",
+                  body: "有多少特征值，就有多少维度。三个特征值唯一确定点在 3D 空间的位置。",
                 },
                 {
                   icon: "🗜️",
-                  title: "降维 = 丢弃信息",
-                  body: "3D→2D 意味着忽略特征3。原本高低不同的两个点，投影后可能完全重叠，无法区分。",
+                  title: "降维 = 信息丢失",
+                  body: "3D→2D 丢弃特征3。原本高低不同的点，投影后完全重叠——这就是信息损失。",
                 },
               ].map((card) => (
                 <div
                   key={card.title}
-                  className="bg-[#131929] border border-slate-700/60 rounded-xl p-4"
+                  className="bg-[#12151f] border border-slate-700/60 rounded-xl p-4"
                 >
-                  <div className="text-lg mb-1.5">{card.icon}</div>
+                  <div className="text-xl mb-1.5">{card.icon}</div>
                   <div className="text-xs font-semibold text-white mb-1">
                     {card.title}
                   </div>
