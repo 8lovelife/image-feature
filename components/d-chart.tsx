@@ -834,7 +834,7 @@ export default function FeatureSpaceDemo() {
 
             <div className="bg-[#12151f] border border-slate-700/60 rounded-2xl p-4 space-y-5 shrink-0">
               <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">
-                空间坐标特征 (1-3)
+                特征参数 (1-7)
               </span>
               <FSlider
                 label="特1"
@@ -860,12 +860,7 @@ export default function FeatureSpaceDemo() {
                 onChange={setF3}
                 disabled={activeDim < 3}
               />
-            </div>
-
-            <div className="bg-[#12151f] border border-slate-700/60 rounded-2xl p-4 space-y-5 shrink-0">
-              <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">
-                物理属性特征 (4-7)
-              </span>
+              <div className="border-t border-slate-700/50" />
               <FSlider
                 label="特4"
                 sub="色相"
@@ -906,7 +901,6 @@ export default function FeatureSpaceDemo() {
                 marks={{ min: "0.1", max: "1.0" }}
                 disabled={activeDim < 6}
               />
-
               {/* 【修改点】配置纯数字格式输出 */}
               <FSlider
                 label="特7"
