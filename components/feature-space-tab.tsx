@@ -83,11 +83,22 @@ function camAt(p: number): [number, number, number] {
 
 function CameraRig({ progress }: { progress: number }) {
   const { camera } = useThree();
-  const targetRef = useRef(new THREE.Vector3(...camAt(progress)));
+  const prevProgress = useRef(progress);
+  const settling = useRef(0); // frames remaining to animate
+
+  useEffect(() => {
+    if (Math.abs(progress - prevProgress.current) > 0.01) {
+      prevProgress.current = progress;
+      settling.current = 60; // animate for ~1s then hand back to OrbitControls
+    }
+  }, [progress]);
+
   useFrame(() => {
+    if (settling.current <= 0) return;
+    settling.current -= 1;
     const [tx, ty, tz] = camAt(progress);
-    targetRef.current.set(tx, ty, tz);
-    camera.position.lerp(targetRef.current, 0.06);
+    const target = new THREE.Vector3(tx, ty, tz);
+    camera.position.lerp(target, 0.07);
     camera.lookAt(0, 0, 0);
     camera.updateProjectionMatrix();
   });

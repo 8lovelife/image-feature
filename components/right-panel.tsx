@@ -188,46 +188,43 @@ export default function RightPanel({
                       POINT_PALETTE[index % POINT_PALETTE.length];
                     return (
                       <div key={image.id} className="space-y-2 md:space-y-3">
-                        <h3 className="font-semibold text-sm md:text-base flex items-center gap-2">
-                          {/* Thumbnail with color ring */}
-                          <div className="relative shrink-0">
+                        <div className="flex items-start gap-3">
+                          <div
+                            className="shrink-0 p-[2px] rounded-lg"
+                            style={{ background: pointColor }}
+                          >
                             <img
                               src={image.src}
                               alt={image.alt}
-                              className="w-10 h-10 rounded-lg object-cover"
-                              style={{
-                                outline: `2px solid ${pointColor}`,
-                                outlineOffset: "1px",
-                              }}
+                              className="w-14 h-14 rounded-md object-cover block"
                             />
                           </div>
-                          <div>
+                          <div className="flex flex-col gap-0.5 min-w-0">
                             <div className="flex items-center gap-1.5">
                               <span
-                                className="w-2 h-2 rounded-full shrink-0"
+                                className="w-2.5 h-2.5 rounded-full shrink-0"
                                 style={{ background: pointColor }}
                               />
-                              <span>Image #{index + 1} Features</span>
+                              <span className="font-semibold text-sm">
+                                Image #{index + 1}
+                              </span>
                             </div>
-                            <div className="text-xs font-normal text-muted-foreground mt-0.5">
-                              {image.description}
-                            </div>
+                            <span className="text-xs text-muted-foreground pl-4">
+                              Dim:{" "}
+                              {image.features[currentFeatureType]?.length ||
+                                currentFeatureInfo.dimensions}
+                            </span>
                           </div>
-                        </h3>
-                        <div className="text-xs text-muted-foreground">
-                          Dimensions:{" "}
-                          {image.features[currentFeatureType]?.length ||
-                            currentFeatureInfo.dimensions}
                         </div>
                         <ImageFeatureDisplay
                           image={image}
                           featureVector={image.features[currentFeatureType]}
                         />
-                        <div className="mt-2 md:mt-4">
+                        {/*<div className="mt-2 md:mt-4">
                           <ColorHistogramChart
                             featureVector={image.features[currentFeatureType]}
                           />
-                        </div>
+                        </div>*/}
                       </div>
                     );
                   })}
