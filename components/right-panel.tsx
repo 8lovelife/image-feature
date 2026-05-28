@@ -15,6 +15,29 @@ import FeatureSpaceTab, {
 } from "./feature-space-tab";
 
 // ─────────────────────────────────────────────────────────────
+// Distance metrics
+// ─────────────────────────────────────────────────────────────
+
+function cosineDistance(a: number[], b: number[]): number {
+  if (!a || !b || a.length !== b.length) return NaN;
+  const dot = a.reduce((s, v, i) => s + v * b[i], 0);
+  const magA = Math.sqrt(a.reduce((s, v) => s + v * v, 0));
+  const magB = Math.sqrt(b.reduce((s, v) => s + v * v, 0));
+  if (magA === 0 || magB === 0) return NaN;
+  return 1 - dot / (magA * magB);
+}
+
+function euclideanDistance(a: number[], b: number[]): number {
+  if (!a || !b || a.length !== b.length) return NaN;
+  return Math.sqrt(a.reduce((s, v, i) => s + (v - b[i]) ** 2, 0));
+}
+
+function manhattanDistance(a: number[], b: number[]): number {
+  if (!a || !b || a.length !== b.length) return NaN;
+  return a.reduce((s, v, i) => s + Math.abs(v - b[i]), 0);
+}
+
+// ─────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────
 
@@ -138,6 +161,7 @@ export default function RightPanel({
           label: `#${i + 1}`,
           src: img.src,
           values: vec ? mapVectorTo7D(vec) : DEFAULT_VALUES,
+          rawVec: vec,
         };
       }),
     [selectedImages, currentFeatureType],
@@ -220,11 +244,11 @@ export default function RightPanel({
                           image={image}
                           featureVector={image.features[currentFeatureType]}
                         />
-                        {/*<div className="mt-2 md:mt-4">
+                        <div className="mt-2 md:mt-4">
                           <ColorHistogramChart
                             featureVector={image.features[currentFeatureType]}
                           />
-                        </div>*/}
+                        </div>
                       </div>
                     );
                   })}

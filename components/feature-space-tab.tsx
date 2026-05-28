@@ -60,6 +60,7 @@ interface FeatureSpaceTabProps {
     label: string;
     src?: string;
     values: FeatureSpaceValues;
+    rawVec?: number[];
   }>;
 }
 
@@ -646,6 +647,121 @@ function ProjectionLines({
 }
 
 // ─────────────────────────────────────────────────────────────
+// Distance lines between all point pairs
+// ─────────────────────────────────────────────────────────────
+
+function DistanceLine({
+  pa,
+  pb,
+  colA,
+  colB,
+  lineWidth,
+  opacity,
+  dashed,
+}: {
+  pa: [number, number, number];
+  pb: [number, number, number];
+  colA: THREE.Color;
+  colB: THREE.Color;
+  lineWidth: number;
+  opacity: number;
+  dashed: boolean;
+}) {
+  // Use vertex colors for true two-tone gradient from colA → colB
+  const vertexColors: [THREE.Color, THREE.Color] = [colA, colB];
+  return (
+    <Line
+      points={[pa, pb]}
+      vertexColors={vertexColors}
+      lineWidth={lineWidth}
+      transparent
+      opacity={opacity}
+      dashed={dashed}
+      dashSize={0.18}
+      gapSize={0.12}
+    />
+  );
+}
+
+function DistanceLines({
+  points,
+  progresses,
+  activeIdx,
+  simExpanded,
+}: {
+  points: Array<{ values: FeatureSpaceValues; color: string }>;
+  progresses: number[];
+  activeIdx: number;
+  simExpanded: boolean;
+}) {
+  const pZ = progresses[1],
+    pY = progresses[2];
+
+  const positions = points.map(
+    (pt) =>
+      [pt.values.f1, pt.values.f3 * (1 - pY), pt.values.f2 * (1 - pZ)] as [
+        number,
+        number,
+        number,
+      ],
+  );
+
+  const pairs: Array<{ i: number; j: number; dist: number }> = [];
+  for (let i = 0; i < points.length; i++) {
+    for (let j = i + 1; j < points.length; j++) {
+      const [ax, ay, az] = positions[i],
+        [bx, by, bz] = positions[j];
+      const dist = Math.sqrt((ax - bx) ** 2 + (ay - by) ** 2 + (az - bz) ** 2);
+      pairs.push({ i, j, dist });
+    }
+  }
+
+  if (pairs.length === 0) return null;
+
+  const dists = pairs.map((p) => p.dist);
+  const minD = Math.min(...dists),
+    maxD = Math.max(...dists);
+  const range = maxD - minD || 1;
+
+  return (
+    <>
+      {pairs.map(({ i, j, dist }) => {
+        const t = (dist - minD) / range;
+        const isRelated = i === activeIdx || j === activeIdx;
+        // When sim panel open: related lines bright, others ghost
+        // When closed: all lines very faint
+        let opacity: number;
+        let lineWidth: number;
+        if (simExpanded) {
+          opacity = isRelated ? lerp(0.85, 0.35, t) : 0.06;
+          lineWidth = isRelated ? lerp(2.5, 1.0, t) : 0.5;
+        } else {
+          opacity = lerp(0.18, 0.05, t);
+          lineWidth = lerp(1.0, 0.4, t);
+        }
+        // Always orient line so active point is the start
+        const fromIdx = i === activeIdx ? i : j === activeIdx ? j : i;
+        const toIdx = i === activeIdx ? j : j === activeIdx ? i : j;
+        const colA = new THREE.Color(points[fromIdx].color);
+        const colB = new THREE.Color(points[toIdx].color);
+        return (
+          <DistanceLine
+            key={`dl-${i}-${j}`}
+            pa={positions[fromIdx]}
+            pb={positions[toIdx]}
+            colA={colA}
+            colB={colB}
+            lineWidth={lineWidth}
+            opacity={opacity}
+            dashed={!isRelated}
+          />
+        );
+      })}
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // Full scene
 // ─────────────────────────────────────────────────────────────
 
@@ -653,15 +769,18 @@ function DChartScene({
   points,
   activeIdx,
   progresses,
+  simExpanded,
 }: {
   points: Array<{
     label: string;
     src?: string;
     values: FeatureSpaceValues;
+    rawVec?: number[];
     color: string;
   }>;
   activeIdx: number;
   progresses: number[];
+  simExpanded: boolean;
 }) {
   return (
     <>
@@ -671,6 +790,15 @@ function DChartScene({
       <CameraRig progress={progresses[2]} />
       <Floor />
       <CoordAxes progresses={progresses} />
+      {/* Distance lines between point pairs */}
+      {points.length > 1 && (
+        <DistanceLines
+          points={points}
+          progresses={progresses}
+          activeIdx={activeIdx}
+          simExpanded={simExpanded}
+        />
+      )}
       {/* Projection lines for ALL points */}
       {points.map((pt, i) => (
         <ProjectionLines
@@ -742,6 +870,7 @@ export default function FeatureSpaceTab({
           label: img.label,
           src: img.src,
           values: img.values,
+          rawVec: img.rawVec,
           color: POINT_PALETTE[i % POINT_PALETTE.length],
         }))
       : [
@@ -749,6 +878,7 @@ export default function FeatureSpaceTab({
             label: "示例",
             src: undefined,
             values: DEFAULT_VALUES,
+            rawVec: undefined,
             color: POINT_PALETTE[0],
           },
         ];
@@ -760,6 +890,25 @@ export default function FeatureSpaceTab({
 
   // Clamp activeIdx when images change
   const safeActive = Math.min(activeIdx, points.length - 1);
+
+  const [simExpanded, setSimExpanded] = useState(false);
+
+  // Collapse sim panel when switching active point
+  useEffect(() => {
+    setSimExpanded(false);
+  }, [safeActive]);
+
+  // Distance helpers (operate on rawVec)
+  const cosDist = (a: number[], b: number[]) => {
+    const dot = a.reduce((s, v, i) => s + v * b[i], 0);
+    const mA = Math.sqrt(a.reduce((s, v) => s + v * v, 0));
+    const mB = Math.sqrt(b.reduce((s, v) => s + v * v, 0));
+    return mA && mB ? 1 - dot / (mA * mB) : NaN;
+  };
+  const eucDist = (a: number[], b: number[]) =>
+    Math.sqrt(a.reduce((s, v, i) => s + (v - b[i]) ** 2, 0));
+  const manDist = (a: number[], b: number[]) =>
+    a.reduce((s, v, i) => s + Math.abs(v - b[i]), 0);
 
   useEffect(() => {
     const tick = () => {
@@ -976,6 +1125,177 @@ export default function FeatureSpaceTab({
                           </div>
                         ) : null;
                       })()}
+                    {/* Similarity panel */}
+                    {isAct &&
+                      points.length > 1 &&
+                      (() => {
+                        const vecA = pt.rawVec;
+                        const rows = points
+                          .map((other, oi) => ({ other, oi }))
+                          .filter(({ oi }) => oi !== i)
+                          .map(({ other, oi }) => {
+                            const vecB = other.rawVec;
+                            if (!vecA || !vecB)
+                              return {
+                                oi,
+                                other,
+                                cos: NaN,
+                                euc: NaN,
+                                man: NaN,
+                              };
+                            const dot = vecA.reduce(
+                              (s: number, v: number, k: number) =>
+                                s + v * vecB[k],
+                              0,
+                            );
+                            const mA = Math.sqrt(
+                              vecA.reduce(
+                                (s: number, v: number) => s + v * v,
+                                0,
+                              ),
+                            );
+                            const mB = Math.sqrt(
+                              vecB.reduce(
+                                (s: number, v: number) => s + v * v,
+                                0,
+                              ),
+                            );
+                            const cos = mA && mB ? 1 - dot / (mA * mB) : NaN;
+                            const euc = Math.sqrt(
+                              vecA.reduce(
+                                (s: number, v: number, k: number) =>
+                                  s + (v - vecB[k]) ** 2,
+                                0,
+                              ),
+                            );
+                            const man = vecA.reduce(
+                              (s: number, v: number, k: number) =>
+                                s + Math.abs(v - vecB[k]),
+                              0,
+                            );
+                            return { oi, other, cos, euc, man };
+                          });
+                        const valid = (arr: number[]) =>
+                          arr.filter((v: number) => !isNaN(v));
+                        const allCos = valid(rows.map((r) => r.cos));
+                        const allEuc = valid(rows.map((r) => r.euc));
+                        const allMan = valid(rows.map((r) => r.man));
+                        const norm = (v: number, vals: number[]) => {
+                          if (!vals.length) return 0;
+                          const lo = Math.min(...vals),
+                            hi = Math.max(...vals);
+                          return hi === lo ? 0.5 : (v - lo) / (hi - lo);
+                        };
+                        return (
+                          <div className="mt-1.5">
+                            <div
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSimExpanded((v) => !v);
+                              }}
+                              className="w-full flex items-center justify-between px-2 py-1 rounded-md text-[10px] font-semibold transition-colors cursor-pointer select-none"
+                              style={{
+                                background: pt.color + "18",
+                                color: pt.color,
+                              }}
+                            >
+                              <span>📐 相似度距离</span>
+                              <span>{simExpanded ? "▲" : "▼"}</span>
+                            </div>
+                            {simExpanded && (
+                              <div
+                                className="mt-1 rounded-md border overflow-hidden"
+                                style={{ borderColor: pt.color + "44" }}
+                              >
+                                {rows.map(({ oi, other, cos, euc, man }) => {
+                                  const nCos = norm(cos, allCos);
+                                  const nEuc = norm(euc, allEuc);
+                                  const nMan = norm(man, allMan);
+                                  const bar = (n: number, color: string) => (
+                                    <div className="h-1 bg-muted rounded-full overflow-hidden mt-0.5">
+                                      <div
+                                        className="h-full rounded-full"
+                                        style={{
+                                          width: `${(isNaN(n) ? 0 : n) * 100}%`,
+                                          background: `linear-gradient(90deg,${color}55,${color})`,
+                                        }}
+                                      />
+                                    </div>
+                                  );
+                                  return (
+                                    <div
+                                      key={oi}
+                                      className="px-2.5 py-2 border-t first:border-t-0 text-[10px]"
+                                      style={{ borderColor: pt.color + "22" }}
+                                    >
+                                      <div className="flex items-center gap-1.5 mb-1.5">
+                                        {other.src ? (
+                                          <img
+                                            src={other.src}
+                                            className="w-5 h-5 rounded object-cover shrink-0"
+                                            style={{
+                                              outline: `1.5px solid ${other.color}`,
+                                            }}
+                                          />
+                                        ) : (
+                                          <div
+                                            className="w-5 h-5 rounded shrink-0"
+                                            style={{
+                                              background: other.color + "33",
+                                              border: `1.5px solid ${other.color}`,
+                                            }}
+                                          />
+                                        )}
+                                        <span
+                                          className="font-bold"
+                                          style={{ color: other.color }}
+                                        >
+                                          {other.label}
+                                        </span>
+                                      </div>
+                                      <div className="space-y-1.5">
+                                        <div>
+                                          <div className="flex justify-between text-muted-foreground">
+                                            <span>余弦距离</span>
+                                            <span className="font-mono text-foreground">
+                                              {isNaN(cos)
+                                                ? "—"
+                                                : cos.toFixed(4)}
+                                            </span>
+                                          </div>
+                                          {bar(nCos, other.color)}
+                                        </div>
+                                        <div>
+                                          <div className="flex justify-between text-muted-foreground">
+                                            <span>欧式距离</span>
+                                            <span className="font-mono text-foreground">
+                                              {isNaN(euc)
+                                                ? "—"
+                                                : euc.toFixed(3)}
+                                            </span>
+                                          </div>
+                                          {bar(nEuc, other.color)}
+                                        </div>
+                                        <div>
+                                          <div className="flex justify-between text-muted-foreground">
+                                            <span>曼哈顿距离</span>
+                                            <span className="font-mono text-foreground">
+                                              {isNaN(man)
+                                                ? "—"
+                                                : man.toFixed(1)}
+                                            </span>
+                                          </div>
+                                          {bar(nMan, other.color)}
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                   </button>
                 );
               })}
@@ -994,6 +1314,7 @@ export default function FeatureSpaceTab({
               points={points}
               activeIdx={safeActive}
               progresses={progresses}
+              simExpanded={simExpanded}
             />
           </Canvas>
           {/* Status badge */}
