@@ -10,8 +10,6 @@ import * as THREE from "three";
 // ─────────────────────────────────────────────────────────────
 
 const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
-const easeIO = (t: number) =>
-  t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
 export const FEATURE_COLORS = {
   f1: "#f43f5e",
@@ -23,25 +21,24 @@ export const FEATURE_COLORS = {
   f7: "#f472b6",
 };
 
-// Palette for distinguishing multiple data points (images)
 export const POINT_PALETTE = [
-  "#6366f1", // indigo
-  "#f97316", // orange
-  "#10b981", // emerald
-  "#ec4899", // pink
-  "#14b8a6", // teal
-  "#f59e0b", // amber
-  "#8b5cf6", // violet
+  "#6366f1",
+  "#f97316",
+  "#10b981",
+  "#ec4899",
+  "#14b8a6",
+  "#f59e0b",
+  "#8b5cf6",
 ];
 
 export interface FeatureSpaceValues {
-  f1: number; // X  [-5, 5]
-  f2: number; // Z  [-5, 5]
-  f3: number; // Y  [-5, 5]
-  f4: number; // hue   [0, 360]
-  f5: number; // size  [0.1, 1.0]
-  f6: number; // alpha [0.1, 1.0]
-  f7: number; // shape [0, 3]
+  f1: number;
+  f2: number;
+  f3: number;
+  f4: number;
+  f5: number;
+  f6: number;
+  f7: number;
 }
 
 export const DEFAULT_VALUES: FeatureSpaceValues = {
@@ -54,217 +51,322 @@ export const DEFAULT_VALUES: FeatureSpaceValues = {
   f7: 1.5,
 };
 
-interface FeatureSpaceTabProps {
-  /** All images' 7D values — one entry per selected image */
-  allImages?: Array<{
-    label: string;
-    src?: string;
-    values: FeatureSpaceValues;
-    rawVec?: number[];
-  }>;
+function toSpace2(vals: FeatureSpaceValues) {
+  return new THREE.Vector3(
+    (vals.f4 / 360) * 8 - 4,
+    ((vals.f5 - 0.1) / 0.9) * 6 - 3,
+    ((vals.f6 - 0.1) / 0.9) * 6 - 3,
+  );
+}
+function toSpace3X(vals: FeatureSpaceValues): number {
+  return (vals.f7 / 3) * 8 - 4;
 }
 
 // ─────────────────────────────────────────────────────────────
-// Camera
+// Camera rig
 // ─────────────────────────────────────────────────────────────
-
-function camAt(p: number): [number, number, number] {
-  if (p <= 0) return [10, 8, 10];
-  if (p < 0.3) {
-    const t = easeIO(p / 0.3);
-    return [lerp(10, 1, t), lerp(8, 5, t), lerp(10, 18, t)];
-  }
-  if (p < 0.65) return [1, 5, 18];
-  if (p < 1) {
-    const t = easeIO((p - 0.65) / 0.35);
-    return [lerp(1, 0.01, t), lerp(5, 22, t), lerp(18, 8, t)];
-  }
-  return [0.01, 22, 8];
-}
-
-function CameraRig({ progress }: { progress: number }) {
+function CameraRig({ activeDim }: { activeDim: number }) {
   const { camera } = useThree();
-  const prevProgress = useRef(progress);
-  const settling = useRef(0); // frames remaining to animate
+  const prevDim = useRef(activeDim);
+  const settling = useRef(0);
 
   useEffect(() => {
-    if (Math.abs(progress - prevProgress.current) > 0.01) {
-      prevProgress.current = progress;
-      settling.current = 60; // animate for ~1s then hand back to OrbitControls
+    if (activeDim !== prevDim.current) {
+      prevDim.current = activeDim;
+      settling.current = 100;
     }
-  }, [progress]);
+  }, [activeDim]);
+
+  // Each space has its own camera position + lookAt target
+  // Space 1 (1-3): focus on origin
+  // Space 2 (4-6): focus on y≈10 (where space2 emerges)
+  // Space 3 (7):   focus on y≈20
+  const configs = [
+    { pos: new THREE.Vector3(18, 12, 28), lookAt: new THREE.Vector3(0, 0, 0) }, // space 1 — pulled back to see full grid
+    { pos: new THREE.Vector3(16, 18, 26), lookAt: new THREE.Vector3(0, 10, 0) }, // space 2
+    { pos: new THREE.Vector3(16, 28, 26), lookAt: new THREE.Vector3(0, 20, 0) }, // space 3
+  ];
+  const cfgIdx = activeDim >= 7 ? 2 : activeDim >= 4 ? 1 : 0;
+  const cfg = configs[cfgIdx];
+  const lookAtRef = useRef(cfg.lookAt.clone());
 
   useFrame(() => {
     if (settling.current <= 0) return;
     settling.current -= 1;
-    const [tx, ty, tz] = camAt(progress);
-    const target = new THREE.Vector3(tx, ty, tz);
-    camera.position.lerp(target, 0.07);
-    camera.lookAt(0, 0, 0);
+    camera.position.lerp(cfg.pos, 0.055);
+    lookAtRef.current.lerp(cfg.lookAt, 0.055);
+    camera.lookAt(lookAtRef.current);
     camera.updateProjectionMatrix();
   });
   return null;
 }
 
 // ─────────────────────────────────────────────────────────────
-// Scene: axes, floor
+// Space 1 axes — collapse Y when space2 emerges
 // ─────────────────────────────────────────────────────────────
-
-function Floor() {
-  return <gridHelper args={[14, 28, "#cbd5e1", "#e2e8f0"]} />;
-}
-
-function CoordAxes({ progresses }: { progresses: number[] }) {
-  const pZ = progresses[1],
-    pY = progresses[2];
-  const ysRef = useRef(1 - pY),
-    zsRef = useRef(1 - pZ);
-  const [ys, setYs] = useState(1),
-    [zs, setZs] = useState(1);
-  useFrame(() => {
-    ysRef.current += (1 - pY - ysRef.current) * 0.09;
-    zsRef.current += (1 - pZ - zsRef.current) * 0.09;
-    setYs(ysRef.current);
-    setZs(zsRef.current);
-  });
+function Space1Axes({
+  activeDim,
+  collapse,
+}: {
+  activeDim: number;
+  collapse: number;
+}) {
   const LEN = 6,
-    df = 12,
     FC = FEATURE_COLORS;
+  const yScale = 1 - collapse;
+
   return (
     <group>
-      <Line
-        points={[
-          [-LEN, 0, 0],
-          [LEN, 0, 0],
-        ]}
-        color={FC.f1}
-        lineWidth={3}
-        transparent
-        opacity={0.9}
-      />
-      <Html
-        position={[LEN + 1.0, 0, 0]}
-        center
-        distanceFactor={df}
-        style={{ pointerEvents: "none" }}
-      >
-        <div style={{ textAlign: "center", lineHeight: 1.2 }}>
-          <div
-            style={{
-              fontSize: 26,
-              fontWeight: 900,
-              color: FC.f1,
-              textShadow: "0 1px 4px rgba(0,0,0,0.15)",
-            }}
-          >
-            X
-          </div>
-          <div
-            style={{
-              fontSize: 11,
-              fontWeight: 600,
-              color: FC.f1,
-              opacity: 0.8,
-            }}
-          >
-            特征1
-          </div>
-        </div>
-      </Html>
-      {zs > 0.015 && (
+      {activeDim >= 1 && (
         <>
           <Line
             points={[
-              [0, 0, -LEN * zs],
-              [0, 0, LEN * zs],
+              [-LEN, 0, 0],
+              [LEN, 0, 0],
             ]}
-            color={FC.f2}
-            lineWidth={3}
-            transparent
-            opacity={0.9 * zs}
-          />
-          <Html
-            position={[0, 0, LEN * zs + 1.0]}
-            center
-            distanceFactor={df}
-            style={{ pointerEvents: "none" }}
-          >
-            <div style={{ textAlign: "center", lineHeight: 1.2, opacity: zs }}>
-              <div
-                style={{
-                  fontSize: 26,
-                  fontWeight: 900,
-                  color: FC.f2,
-                  textShadow: "0 1px 4px rgba(0,0,0,0.15)",
-                }}
-              >
-                Z
-              </div>
-              <div
-                style={{
-                  fontSize: 11,
-                  fontWeight: 600,
-                  color: FC.f2,
-                  opacity: 0.8,
-                }}
-              >
-                特征2
-              </div>
-            </div>
-          </Html>
-        </>
-      )}
-      {ys > 0.015 && (
-        <>
-          <Line
-            points={[
-              [0, 0, 0],
-              [0, LEN * ys, 0],
-            ]}
-            color={FC.f3}
+            color={FC.f1}
             lineWidth={2.5}
             transparent
-            opacity={ys * 1.0}
+            opacity={0.9}
           />
           <Html
-            position={[0, LEN * ys + 0.8, 0]}
             center
-            distanceFactor={df}
+            distanceFactor={14}
+            position={[LEN + 1, 0, 0]}
             style={{ pointerEvents: "none" }}
           >
             <div
               style={{
-                textAlign: "center",
-                lineHeight: 1.2,
-                opacity: ys * 1.4,
+                fontSize: 11,
+                fontWeight: 900,
+                color: FC.f1,
+                whiteSpace: "nowrap",
               }}
             >
-              <div
-                style={{
-                  fontSize: 26,
-                  fontWeight: 900,
-                  color: FC.f3,
-                  textShadow: "0 1px 4px rgba(0,0,0,0.15)",
-                }}
-              >
-                Y
-              </div>
-              <div
-                style={{
-                  fontSize: 11,
-                  fontWeight: 600,
-                  color: FC.f3,
-                  opacity: 0.8,
-                }}
-              >
-                特征3
-              </div>
+              X · f1
             </div>
           </Html>
         </>
       )}
+      {activeDim >= 2 && (
+        <>
+          <Line
+            points={[
+              [0, 0, -LEN],
+              [0, 0, LEN],
+            ]}
+            color={FC.f2}
+            lineWidth={2.5}
+            transparent
+            opacity={0.9}
+          />
+          <Html
+            center
+            distanceFactor={14}
+            position={[0, 0, LEN + 1]}
+            style={{ pointerEvents: "none" }}
+          >
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 900,
+                color: FC.f2,
+                whiteSpace: "nowrap",
+              }}
+            >
+              Z · f2
+            </div>
+          </Html>
+        </>
+      )}
+      {activeDim >= 3 && yScale > 0.02 && (
+        <>
+          <Line
+            points={[
+              [0, 0, 0],
+              [0, LEN * yScale, 0],
+            ]}
+            color={FC.f3}
+            lineWidth={2.5}
+            transparent
+            opacity={0.9 * yScale}
+          />
+          <Html
+            center
+            distanceFactor={14}
+            position={[0, LEN * yScale + 0.8, 0]}
+            style={{ pointerEvents: "none", opacity: yScale }}
+          >
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 900,
+                color: FC.f3,
+                whiteSpace: "nowrap",
+              }}
+            >
+              Y · f3
+            </div>
+          </Html>
+        </>
+      )}
+      {/* Plane visualisation when collapsing */}
+      {collapse > 0.05 && (
+        <mesh rotation={[-Math.PI / 2, 0, 0]}>
+          <planeGeometry args={[LEN * 2, LEN * 2]} />
+          <meshBasicMaterial
+            color={FC.f3}
+            transparent
+            opacity={collapse * 0.07}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+      )}
       <mesh>
-        <sphereGeometry args={[0.08, 16, 16]} />
+        <sphereGeometry args={[0.08, 12, 12]} />
+        <meshBasicMaterial color="#94a3b8" />
+      </mesh>
+      <gridHelper args={[14, 28, "#cbd5e1", "#e2e8f0"]} />
+    </group>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Space 2 axes — emerges upward, itself collapses when space3 comes
+// ─────────────────────────────────────────────────────────────
+function Space2Axes({
+  activeDim,
+  emerge,
+  collapse,
+}: {
+  activeDim: number;
+  emerge: number;
+  collapse: number;
+}) {
+  const LEN = 5,
+    FC = FEATURE_COLORS;
+  const yOff = lerp(0, 10, emerge);
+  const yScale = 1 - collapse;
+  if (emerge < 0.02) return null;
+
+  return (
+    <group position={[0, yOff, 0]}>
+      {/* Floor plane — space1 projected */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[LEN * 2, LEN * 2]} />
+        <meshBasicMaterial
+          color={FC.f4}
+          transparent
+          opacity={emerge * 0.06}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      {activeDim >= 4 && (
+        <>
+          <Line
+            points={[
+              [-LEN * emerge, 0, 0],
+              [LEN * emerge, 0, 0],
+            ]}
+            color={FC.f4}
+            lineWidth={2}
+            transparent
+            opacity={0.85 * emerge}
+          />
+          <Html
+            center
+            distanceFactor={14}
+            position={[LEN * emerge + 0.8, 0, 0]}
+            style={{ pointerEvents: "none", opacity: emerge }}
+          >
+            <div
+              style={{
+                fontSize: 10,
+                fontWeight: 800,
+                color: FC.f4,
+                whiteSpace: "nowrap",
+              }}
+            >
+              色相 · f4
+            </div>
+          </Html>
+        </>
+      )}
+      {activeDim >= 5 && (
+        <>
+          <Line
+            points={[
+              [0, 0, -LEN * emerge],
+              [0, 0, LEN * emerge],
+            ]}
+            color={FC.f5}
+            lineWidth={2}
+            transparent
+            opacity={0.85 * emerge}
+          />
+          <Html
+            center
+            distanceFactor={14}
+            position={[0, 0, LEN * emerge + 0.8]}
+            style={{ pointerEvents: "none", opacity: emerge }}
+          >
+            <div
+              style={{
+                fontSize: 10,
+                fontWeight: 800,
+                color: FC.f5,
+                whiteSpace: "nowrap",
+              }}
+            >
+              大小 · f5
+            </div>
+          </Html>
+        </>
+      )}
+      {activeDim >= 6 && yScale > 0.02 && (
+        <>
+          <Line
+            points={[
+              [0, 0, 0],
+              [0, LEN * emerge * yScale, 0],
+            ]}
+            color={FC.f6}
+            lineWidth={2}
+            transparent
+            opacity={0.85 * emerge * yScale}
+          />
+          <Html
+            center
+            distanceFactor={14}
+            position={[0, LEN * emerge * yScale + 0.8, 0]}
+            style={{ pointerEvents: "none", opacity: emerge * yScale }}
+          >
+            <div
+              style={{
+                fontSize: 10,
+                fontWeight: 800,
+                color: FC.f6,
+                whiteSpace: "nowrap",
+              }}
+            >
+              透明 · f6
+            </div>
+          </Html>
+        </>
+      )}
+      {collapse > 0.05 && (
+        <mesh rotation={[-Math.PI / 2, 0, 0]}>
+          <planeGeometry args={[LEN * 2, LEN * 2]} />
+          <meshBasicMaterial
+            color={FC.f6}
+            transparent
+            opacity={collapse * 0.07}
+            side={THREE.DoubleSide}
+          />
+        </mesh>
+      )}
+      <mesh>
+        <sphereGeometry args={[0.07, 10, 10]} />
         <meshBasicMaterial color="#94a3b8" />
       </mesh>
     </group>
@@ -272,488 +374,389 @@ function CoordAxes({ progresses }: { progresses: number[] }) {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Sub-dimension spokes (f4–f7) — shown only for active point
+// Space 3 axis — emerges above space 2
 // ─────────────────────────────────────────────────────────────
+function Space3Axis({
+  activeDim,
+  emerge2,
+  emerge3,
+}: {
+  activeDim: number;
+  emerge2: number;
+  emerge3: number;
+}) {
+  const LEN = 5,
+    FC = FEATURE_COLORS;
+  const yOff = lerp(0, 10, emerge2) + lerp(0, 10, emerge3);
+  if (emerge3 < 0.02 || activeDim < 7) return null;
 
-function SubCoordinates({ f4, f5, f6, f7, progresses, pointColor }: any) {
-  const pColor = progresses[3],
-    pSize = progresses[4];
-  const pOpacity = progresses[5],
-    pShape = progresses[6];
-  const l4 = (f4 / 360) * 2 * (1 - pColor);
-  const l5 = (f5 / 1.0) * 2 * (1 - pSize);
-  const l6 = (f6 / 1.0) * 2 * (1 - pOpacity);
-  const l7 = (f7 === 0 ? 0 : (f7 / 3) * 2) * (1 - pShape);
-  const FC = FEATURE_COLORS;
-  const dirs = [
-    new THREE.Vector3(1, 1, 1).normalize(),
-    new THREE.Vector3(-1, 1, -1).normalize(),
-    new THREE.Vector3(-1, -1, 1).normalize(),
-    new THREE.Vector3(1, -1, -1).normalize(),
-  ];
-  const axes = [
-    { id: "f4", len: l4, dir: dirs[0], color: FC.f4, label: "特4(色)" },
-    { id: "f5", len: l5, dir: dirs[1], color: FC.f5, label: "特5(大)" },
-    { id: "f6", len: l6, dir: dirs[2], color: FC.f6, label: "特6(透)" },
-    { id: "f7", len: l7, dir: dirs[3], color: FC.f7, label: "特7(形)" },
-  ];
   return (
-    <group>
-      {axes.map(
-        (ax) =>
-          ax.len > 0.01 && (
-            <group key={ax.id}>
-              <Line
-                points={[
-                  [0, 0, 0],
-                  [ax.dir.x * ax.len, ax.dir.y * ax.len, ax.dir.z * ax.len],
-                ]}
-                color={ax.color}
-                lineWidth={2}
-                transparent
-                opacity={0.75}
-              />
-              <mesh
-                position={[
-                  ax.dir.x * ax.len,
-                  ax.dir.y * ax.len,
-                  ax.dir.z * ax.len,
-                ]}
-              >
-                <sphereGeometry args={[0.055, 12, 12]} />
-                <meshBasicMaterial color={ax.color} />
-              </mesh>
-              <Html
-                position={[
-                  ax.dir.x * ax.len * 1.25,
-                  ax.dir.y * ax.len * 1.25,
-                  ax.dir.z * ax.len * 1.25,
-                ]}
-                center
-                style={{ pointerEvents: "none" }}
-              >
-                <div
-                  style={{
-                    fontSize: 10,
-                    color: ax.color,
-                    fontWeight: 900,
-                    textShadow: "0 1px 3px rgba(0,0,0,0.15)",
-                  }}
-                >
-                  {ax.label}
-                </div>
-              </Html>
-            </group>
-          ),
-      )}
+    <group position={[0, yOff, 0]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]}>
+        <planeGeometry args={[LEN * 2, LEN * 2]} />
+        <meshBasicMaterial
+          color={FC.f7}
+          transparent
+          opacity={emerge3 * 0.06}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+      <Line
+        points={[
+          [-LEN * emerge3, 0, 0],
+          [LEN * emerge3, 0, 0],
+        ]}
+        color={FC.f7}
+        lineWidth={2}
+        transparent
+        opacity={0.85 * emerge3}
+      />
+      <Html
+        center
+        distanceFactor={14}
+        position={[LEN * emerge3 + 0.8, 0, 0]}
+        style={{ pointerEvents: "none", opacity: emerge3 }}
+      >
+        <div
+          style={{
+            fontSize: 10,
+            fontWeight: 800,
+            color: FC.f7,
+            whiteSpace: "nowrap",
+          }}
+        >
+          形状 · f7
+        </div>
+      </Html>
+      <mesh>
+        <sphereGeometry args={[0.07, 10, 10]} />
+        <meshBasicMaterial color="#94a3b8" />
+      </mesh>
     </group>
   );
 }
 
 // ─────────────────────────────────────────────────────────────
-// Single data point mesh
+// Shape geometry
 // ─────────────────────────────────────────────────────────────
-
-const SHAPES_DEF = [
+const SHAPES = [
   (k: string) => <sphereGeometry key={k} args={[1, 32, 32]} />,
   (k: string) => <boxGeometry key={k} args={[1.4, 1.4, 1.4]} />,
   (k: string) => <octahedronGeometry key={k} args={[1.2]} />,
   (k: string) => <torusGeometry key={k} args={[0.7, 0.35, 16, 32]} />,
 ];
 
-function DataPoint({
-  f1,
-  f2,
-  f3,
-  f4,
-  f5,
-  f6,
-  f7,
-  progresses,
+// ─────────────────────────────────────────────────────────────
+// Point mesh rendered at a given position
+// ─────────────────────────────────────────────────────────────
+function PointMesh({
+  position,
+  col,
+  size,
+  alpha,
+  shapeT,
+  label,
   pointColor,
   isActive,
-  label,
-}: any) {
-  const posGroupRef = useRef<THREE.Group>(null);
+  dimTag,
+}: {
+  position: THREE.Vector3;
+  col: THREE.Color;
+  size: number;
+  alpha: number;
+  shapeT: number;
+  label: string;
+  pointColor: string;
+  isActive: boolean;
+  dimTag?: string;
+}) {
   const meshRefs = useRef<THREE.Mesh[]>([]);
   const matRefs = useRef<THREE.MeshStandardMaterial[]>([]);
+  const groupRef = useRef<THREE.Group>(null);
 
   useFrame(() => {
-    const pZ = progresses[1],
-      pY = progresses[2];
-    const pColor = progresses[3],
-      pSize = progresses[4];
-    const pOpacity = progresses[5],
-      pShape = progresses[6];
-
-    // All points: position driven by f1/f2/f3 + global collapse
-    const curZ = f2 * (1 - pZ);
-    const curY = f3 * (1 - pY);
-    if (posGroupRef.current) posGroupRef.current.position.set(f1, curY, curZ);
-
-    // All points encode their own f4 colour (tinted toward pointColor for non-active)
-    const hslColor = new THREE.Color().setHSL(f4 / 360, 1.0, 0.5);
-    const paletteColor = new THREE.Color(pointColor);
-    // active: fully hsl-encoded; non-active: 60% palette, 40% hsl
-    const blended = isActive
-      ? hslColor.lerp(new THREE.Color("#888"), pColor)
-      : hslColor.clone().lerp(paletteColor, 0.6);
-
-    // All points encode f5 size (non-active scaled down by 0.7)
-    const sizeScale = isActive ? 1.0 : 0.7;
-    const curSize = lerp(f5, 0.22, pSize) * sizeScale;
-    const sq = Math.max(0.05, 1 - pY * 0.95);
-    const sx = curSize * (1 + (1 - sq) * 0.3);
-    const sy = curSize * sq;
-    const sz = curSize * (1 + (1 - sq) * 0.3);
-
-    // All points encode f6 opacity (non-active capped at 0.75)
-    const curOpacity = Math.min(lerp(f6, 1.0, pOpacity), isActive ? 1.0 : 0.75);
-
-    // All points encode f7 shape (non-active also morph shape)
-    const curF7 = f7 * (1 - pShape);
-    const idx1 = Math.floor(curF7),
-      idx2 = Math.min(3, Math.ceil(curF7)),
-      t = curF7 - idx1;
-
+    if (groupRef.current) groupRef.current.position.copy(position);
+    const idx1 = Math.floor(shapeT),
+      idx2 = Math.min(3, Math.ceil(shapeT)),
+      t = shapeT - idx1;
     for (let i = 0; i < 4; i++) {
-      if (!meshRefs.current[i] || !matRefs.current[i]) continue;
+      const mesh = meshRefs.current[i],
+        mat = matRefs.current[i];
+      if (!mesh || !mat) continue;
       let o = 0;
       if (i === idx1 && i === idx2) o = 1;
       else if (i === idx1) o = 1 - t;
       else if (i === idx2) o = t;
-      const mat = matRefs.current[i];
-      mat.color.copy(blended);
-      mat.emissive.copy(blended).multiplyScalar(isActive ? 0.35 : 0.1);
-      mat.opacity = curOpacity * o;
+      mat.color.copy(col);
+      mat.emissive.copy(col).multiplyScalar(isActive ? 0.3 : 0.05);
+      mat.opacity = alpha * o;
       mat.transparent = true;
-      const mesh = meshRefs.current[i];
       mesh.visible = o > 0.001;
-      if (mesh.visible) mesh.scale.set(sx, sy, sz);
+      if (mesh.visible) mesh.scale.setScalar(size);
     }
   });
 
   return (
-    <group ref={posGroupRef}>
-      <group>
-        {SHAPES_DEF.map((geomFn, i) => (
-          <mesh
-            key={i}
+    <group ref={groupRef}>
+      {SHAPES.map((geo, i) => (
+        <mesh
+          key={i}
+          ref={(el) => {
+            meshRefs.current[i] = el as THREE.Mesh;
+          }}
+        >
+          {geo(`m${i}`)}
+          <meshStandardMaterial
             ref={(el) => {
-              meshRefs.current[i] = el as THREE.Mesh;
+              matRefs.current[i] = el as THREE.MeshStandardMaterial;
             }}
-          >
-            {geomFn(`s${i}`)}
-            <meshStandardMaterial
-              ref={(el) => {
-                matRefs.current[i] = el as THREE.MeshStandardMaterial;
-              }}
-              roughness={0.15}
-              metalness={0.15}
-            />
-          </mesh>
-        ))}
-      </group>
-      {/* Label — always shown above each point */}
+            roughness={0.12}
+            metalness={0.15}
+          />
+        </mesh>
+      ))}
       <Html
         center
+        position={[0, size + 0.45, 0]}
         style={{ pointerEvents: "none" }}
-        position={[0, lerp(f5, 0.22, 0) * (isActive ? 1 : 0.7) + 0.5, 0]}
       >
         <div
           style={{
-            background: isActive ? pointColor : "rgba(255,255,255,0.88)",
+            background: isActive ? pointColor : "rgba(255,255,255,0.9)",
             border: `1.5px solid ${pointColor}`,
-            borderRadius: 6,
-            padding: "2px 8px",
-            fontSize: 10,
+            borderRadius: 5,
+            padding: "1px 6px",
+            fontSize: 9,
             fontWeight: 700,
             color: isActive ? "#fff" : pointColor,
             whiteSpace: "nowrap",
             boxShadow: isActive
-              ? `0 2px 8px ${pointColor}66`
-              : "0 1px 4px rgba(0,0,0,0.1)",
-            transition: "all 0.2s",
+              ? `0 2px 6px ${pointColor}55`
+              : "0 1px 3px rgba(0,0,0,0.1)",
           }}
         >
           {label}
+          {dimTag ? ` · ${dimTag}` : ""}
         </div>
       </Html>
-      {/* Sub-axes only for active point */}
-      {isActive && (
-        <SubCoordinates
-          f4={f4}
-          f5={f5}
-          f6={f6}
-          f7={f7}
-          progresses={progresses}
-          pointColor={pointColor}
-        />
-      )}
     </group>
   );
 }
 
 // ─────────────────────────────────────────────────────────────
-// Ghost (projection trace) — only for active point
+// Multi-space data point: same element visible in all spaces
 // ─────────────────────────────────────────────────────────────
-
-function GhostPoint({
-  f1,
-  f2,
-  f3,
-  f4,
-  f5,
-  f6,
-  f7,
-  progresses,
+function MultiSpacePoint({
+  vals,
+  activeDim,
   pointColor,
+  label,
   isActive,
-}: any) {
-  const ghost1Ref = useRef<THREE.Mesh>(null);
-  const ghost2Ref = useRef<THREE.Mesh>(null);
-  const maxCollapse = Math.max(...progresses.slice(1));
-  // Active point: full ghost; others: lighter wireframe only
-  const ghostAlpha = isActive
-    ? Math.min(0.3, maxCollapse * 0.35)
-    : Math.min(0.15, maxCollapse * 0.18);
-  useFrame(() => {
-    if (ghost1Ref.current) {
-      ghost1Ref.current.position.set(f1, f3, f2);
-      ghost1Ref.current.scale.setScalar(f5 * (isActive ? 1 : 0.7));
-    }
-    if (ghost2Ref.current) {
-      ghost2Ref.current.position.set(f1, f3, f2);
-      ghost2Ref.current.scale.setScalar(f5 * (isActive ? 1 : 0.7));
-    }
-  });
-  if (maxCollapse < 0.05) return null;
-  const origColor = new THREE.Color().setHSL(f4 / 360, 1.0, 0.5);
-  const idx1 = Math.floor(f7),
-    idx2 = Math.min(3, Math.ceil(f7)),
-    t = f7 - idx1;
-  const shapesEl = [
-    <sphereGeometry args={[1, 32, 32]} key="0" />,
-    <boxGeometry args={[1.4, 1.4, 1.4]} key="1" />,
-    <octahedronGeometry args={[1.2]} key="2" />,
-    <torusGeometry args={[0.7, 0.35, 16, 32]} key="3" />,
-  ];
-  return (
-    <group>
-      {t < 1 && (
-        <mesh ref={ghost1Ref}>
-          {shapesEl[idx1]}
-          <meshBasicMaterial
-            color={origColor}
-            transparent
-            opacity={ghostAlpha * f6 * 2.2 * (1 - t)}
-            wireframe
-          />
-        </mesh>
-      )}
-      {t > 0 && (
-        <mesh ref={ghost2Ref}>
-          {shapesEl[idx2]}
-          <meshBasicMaterial
-            color={origColor}
-            transparent
-            opacity={ghostAlpha * f6 * 2.2 * t}
-            wireframe
-          />
-        </mesh>
-      )}
-      {/* Drop-line from original Y to collapsed Y — all points */}
-      {progresses[2] > 0.1 && Math.abs(f3) > 0.1 && (
-        <Line
-          points={[
-            [f1, f3, f2],
-            [f1, f3 * (1 - progresses[2]) + 0.01, f2],
-          ]}
-          color={new THREE.Color(pointColor)}
-          lineWidth={isActive ? 2 : 1}
-          dashed
-          dashSize={0.1}
-          gapSize={0.07}
-          transparent
-          opacity={Math.min(isActive ? 0.75 : 0.35, progresses[2] * 2)}
-        />
-      )}
-    </group>
+  emerge2,
+  emerge3,
+  collapse1,
+  collapse2,
+}: {
+  vals: FeatureSpaceValues;
+  activeDim: number;
+  pointColor: string;
+  label: string;
+  isActive: boolean;
+  emerge2: number;
+  emerge3: number;
+  collapse1: number;
+  collapse2: number;
+}) {
+  // Space 1 world position
+  const pos1 = new THREE.Vector3(
+    activeDim >= 1 ? vals.f1 : 0,
+    activeDim >= 3 ? vals.f3 : 0,
+    activeDim >= 2 ? vals.f2 : 0,
   );
-}
+  // Space 2 world position (local + y-offset)
+  const s2local = toSpace2(vals);
+  const pos2 = new THREE.Vector3(
+    s2local.x * emerge2,
+    lerp(0, 10, emerge2) + s2local.y * emerge2,
+    s2local.z * emerge2,
+  );
+  // Space 3 world position
+  const s3x = toSpace3X(vals);
+  const pos3 = new THREE.Vector3(
+    s3x * emerge3,
+    lerp(0, 10, emerge2) + lerp(0, 10, emerge3),
+    0,
+  );
 
-// ─────────────────────────────────────────────────────────────
-// Projection drop-lines for active point
-// ─────────────────────────────────────────────────────────────
+  const pal = new THREE.Color(pointColor);
+  // Use palette color consistently — spatial position carries all info
+  const s1col = pal.clone();
+  const baseSize = 0.32 * (isActive ? 1 : 0.65);
+  const opacity = isActive ? 0.88 : 0.6;
+  const shapeT = 0; // shape fixed to sphere; position encodes data
 
-function ProjectionLines({
-  f1,
-  f2,
-  f3,
-  progresses,
-  opacity = 1.0,
-  color,
-}: any) {
-  const pZ = progresses[1],
-    pY = progresses[2];
-  const curZ = f2 * (1 - pZ),
-    curY = f3 * (1 - pY);
-  // Active point: use axis colours; non-active: use point palette colour
-  const col3 = color ?? FEATURE_COLORS.f3;
-  const col1 = color ?? FEATURE_COLORS.f1;
-  const col2 = color ?? FEATURE_COLORS.f2;
+  const colObj = new THREE.Color(pointColor);
+
   return (
     <>
-      {Math.abs(curY) > 0.04 && (
-        <Line
-          points={[
-            [f1, curY, curZ],
-            [f1, 0, curZ],
-          ]}
-          color={col3}
-          dashed
-          dashSize={0.14}
-          gapSize={0.07}
-          transparent
-          opacity={(1 - pY) * 0.85 * opacity}
+      {/* Space 1 point */}
+      <PointMesh
+        position={pos1}
+        col={s1col.clone()}
+        size={baseSize}
+        alpha={opacity}
+        shapeT={shapeT}
+        label={label}
+        pointColor={pointColor}
+        isActive={isActive}
+      />
+
+      {/* Space 2 point */}
+      {emerge2 > 0.05 && (
+        <PointMesh
+          position={pos2}
+          col={pal.clone()}
+          size={baseSize * 0.85 * emerge2}
+          alpha={opacity * emerge2}
+          shapeT={0}
+          label={label}
+          pointColor={pointColor}
+          isActive={isActive}
+          dimTag="S2"
         />
       )}
-      <Line
-        points={[
-          [f1, 0, curZ],
-          [0, 0, curZ],
-        ]}
-        color={col1}
-        dashed
-        dashSize={0.09}
-        gapSize={0.06}
-        transparent
-        opacity={0.45 * (1 - pZ) * opacity}
-      />
-      <Line
-        points={[
-          [f1, 0, curZ],
-          [f1, 0, 0],
-        ]}
-        color={col2}
-        dashed
-        dashSize={0.09}
-        gapSize={0.06}
-        transparent
-        opacity={0.45 * (1 - pZ) * opacity}
-      />
+
+      {/* Space 3 point */}
+      {emerge3 > 0.05 && activeDim >= 7 && (
+        <PointMesh
+          position={pos3}
+          col={pal.clone().lerp(new THREE.Color(FEATURE_COLORS.f7), 0.4)}
+          size={baseSize * 0.7 * emerge3}
+          alpha={opacity * emerge3}
+          shapeT={0}
+          label={label}
+          pointColor={pointColor}
+          isActive={isActive}
+          dimTag="S3"
+        />
+      )}
+
+      {/* S1 → S2 connector: same element across spaces */}
+      {emerge2 > 0.05 && (
+        <Line
+          points={[
+            pos1.toArray() as [number, number, number],
+            pos2.toArray() as [number, number, number],
+          ]}
+          color={colObj}
+          lineWidth={isActive ? 1.2 : 0.6}
+          transparent
+          opacity={0.35 * emerge2 * (isActive ? 1 : 0.4)}
+          dashed
+          dashSize={0.22}
+          gapSize={0.14}
+        />
+      )}
+
+      {/* S2 → S3 connector */}
+      {emerge3 > 0.05 && activeDim >= 7 && (
+        <Line
+          points={[
+            pos2.toArray() as [number, number, number],
+            pos3.toArray() as [number, number, number],
+          ]}
+          color={colObj}
+          lineWidth={isActive ? 1.2 : 0.6}
+          transparent
+          opacity={0.35 * emerge3 * (isActive ? 1 : 0.4)}
+          dashed
+          dashSize={0.22}
+          gapSize={0.14}
+        />
+      )}
+
+      {/* Drop-line in space1 */}
+      {activeDim >= 3 && Math.abs(vals.f3) > 0.05 && (
+        <Line
+          points={[
+            pos1.toArray() as [number, number, number],
+            [pos1.x, 0, pos1.z],
+          ]}
+          color={FEATURE_COLORS.f3}
+          lineWidth={1}
+          transparent
+          opacity={isActive ? 0.45 : 0.12}
+          dashed
+          dashSize={0.12}
+          gapSize={0.08}
+        />
+      )}
     </>
   );
 }
 
 // ─────────────────────────────────────────────────────────────
-// Distance lines between all point pairs
+// Distance lines in Space 1
 // ─────────────────────────────────────────────────────────────
-
-function DistanceLine({
-  pa,
-  pb,
-  colA,
-  colB,
-  lineWidth,
-  opacity,
-  dashed,
-}: {
-  pa: [number, number, number];
-  pb: [number, number, number];
-  colA: THREE.Color;
-  colB: THREE.Color;
-  lineWidth: number;
-  opacity: number;
-  dashed: boolean;
-}) {
-  // Use vertex colors for true two-tone gradient from colA → colB
-  const vertexColors: [THREE.Color, THREE.Color] = [colA, colB];
-  return (
-    <Line
-      points={[pa, pb]}
-      vertexColors={vertexColors}
-      lineWidth={lineWidth}
-      transparent
-      opacity={opacity}
-      dashed={dashed}
-      dashSize={0.18}
-      gapSize={0.12}
-    />
-  );
-}
-
 function DistanceLines({
   points,
-  progresses,
+  activeDim,
   activeIdx,
   simExpanded,
 }: {
-  points: Array<{ values: FeatureSpaceValues; color: string }>;
-  progresses: number[];
+  points: Array<{ vals: FeatureSpaceValues; color: string }>;
+  activeDim: number;
   activeIdx: number;
   simExpanded: boolean;
 }) {
-  const pZ = progresses[1],
-    pY = progresses[2];
-
   const positions = points.map(
     (pt) =>
-      [pt.values.f1, pt.values.f3 * (1 - pY), pt.values.f2 * (1 - pZ)] as [
-        number,
-        number,
-        number,
-      ],
+      new THREE.Vector3(
+        activeDim >= 1 ? pt.vals.f1 : 0,
+        activeDim >= 3 ? pt.vals.f3 : 0,
+        activeDim >= 2 ? pt.vals.f2 : 0,
+      ),
   );
-
   const pairs: Array<{ i: number; j: number; dist: number }> = [];
-  for (let i = 0; i < points.length; i++) {
-    for (let j = i + 1; j < points.length; j++) {
-      const [ax, ay, az] = positions[i],
-        [bx, by, bz] = positions[j];
-      const dist = Math.sqrt((ax - bx) ** 2 + (ay - by) ** 2 + (az - bz) ** 2);
-      pairs.push({ i, j, dist });
-    }
-  }
-
-  if (pairs.length === 0) return null;
-
-  const dists = pairs.map((p) => p.dist);
-  const minD = Math.min(...dists),
-    maxD = Math.max(...dists);
-  const range = maxD - minD || 1;
-
+  for (let i = 0; i < points.length; i++)
+    for (let j = i + 1; j < points.length; j++)
+      pairs.push({ i, j, dist: positions[i].distanceTo(positions[j]) });
+  if (!pairs.length) return null;
+  const dists = pairs.map((p) => p.dist),
+    minD = Math.min(...dists),
+    maxD = Math.max(...dists),
+    rng = maxD - minD || 1;
   return (
     <>
       {pairs.map(({ i, j, dist }) => {
-        const t = (dist - minD) / range;
+        const t = (dist - minD) / rng;
         const isRelated = i === activeIdx || j === activeIdx;
-        // When sim panel open: related lines bright, others ghost
-        // When closed: all lines very faint
-        let opacity: number;
-        let lineWidth: number;
-        if (simExpanded) {
-          opacity = isRelated ? lerp(0.85, 0.35, t) : 0.06;
-          lineWidth = isRelated ? lerp(2.5, 1.0, t) : 0.5;
-        } else {
-          opacity = lerp(0.18, 0.05, t);
-          lineWidth = lerp(1.0, 0.4, t);
-        }
-        // Always orient line so active point is the start
         const fromIdx = i === activeIdx ? i : j === activeIdx ? j : i;
         const toIdx = i === activeIdx ? j : j === activeIdx ? i : j;
-        const colA = new THREE.Color(points[fromIdx].color);
-        const colB = new THREE.Color(points[toIdx].color);
+        let opacity: number, lineWidth: number;
+        if (simExpanded) {
+          opacity = isRelated ? lerp(0.85, 0.35, t) : 0.05;
+          lineWidth = isRelated ? lerp(2.5, 1.0, t) : 0.4;
+        } else {
+          opacity = lerp(0.12, 0.03, t);
+          lineWidth = lerp(0.8, 0.3, t);
+        }
+        const colA = new THREE.Color(points[fromIdx].color),
+          colB = new THREE.Color(points[toIdx].color);
         return (
-          <DistanceLine
+          <Line
             key={`dl-${i}-${j}`}
-            pa={positions[fromIdx]}
-            pb={positions[toIdx]}
-            colA={colA}
-            colB={colB}
+            points={[
+              positions[fromIdx].toArray() as [number, number, number],
+              positions[toIdx].toArray() as [number, number, number],
+            ]}
+            vertexColors={[colA, colB]}
             lineWidth={lineWidth}
+            transparent
             opacity={opacity}
             dashed={!isRelated}
+            dashSize={0.15}
+            gapSize={0.1}
           />
         );
       })}
@@ -762,93 +765,90 @@ function DistanceLines({
 }
 
 // ─────────────────────────────────────────────────────────────
-// Full scene
+// Full scene — smooth emerge/collapse transitions
 // ─────────────────────────────────────────────────────────────
-
-function DChartScene({
+function Scene({
   points,
+  activeDim,
   activeIdx,
-  progresses,
   simExpanded,
 }: {
-  points: Array<{
-    label: string;
-    src?: string;
-    values: FeatureSpaceValues;
-    rawVec?: number[];
-    color: string;
-  }>;
+  points: Array<{ label: string; vals: FeatureSpaceValues; color: string }>;
+  activeDim: number;
   activeIdx: number;
-  progresses: number[];
   simExpanded: boolean;
 }) {
+  const collapseRef1 = useRef(0),
+    emerge2Ref = useRef(0);
+  const collapseRef2 = useRef(0),
+    emerge3Ref = useRef(0);
+  // Use state only to trigger re-render; refs drive the actual values
+  const [vals, setVals] = useState({ c1: 0, e2: 0, c2: 0, e3: 0 });
+
+  const tC1 = activeDim >= 4 ? 1 : 0,
+    tE2 = activeDim >= 4 ? 1 : 0;
+  const tC2 = activeDim >= 7 ? 1 : 0,
+    tE3 = activeDim >= 7 ? 1 : 0;
+
+  // Eased lerp for smooth deceleration
+  const smoothStep = (t: number) => t * t * (3 - 2 * t);
+
+  useFrame((_, delta) => {
+    // Clamp delta to avoid huge jumps on tab-switch
+    const dt = Math.min(delta, 0.05);
+    const sp = dt * 1.4; // slower = smoother
+    let changed = false;
+    const move = (cur: number, target: number) => {
+      const diff = target - cur;
+      if (Math.abs(diff) < 0.0005) return target;
+      changed = true;
+      return cur + diff * sp;
+    };
+    collapseRef1.current = move(collapseRef1.current, tC1);
+    emerge2Ref.current = move(emerge2Ref.current, tE2);
+    collapseRef2.current = move(collapseRef2.current, tC2);
+    emerge3Ref.current = move(emerge3Ref.current, tE3);
+    if (changed)
+      setVals({
+        c1: collapseRef1.current,
+        e2: emerge2Ref.current,
+        c2: collapseRef2.current,
+        e3: emerge3Ref.current,
+      });
+  });
+
+  const { c1: collapse1, e2: emerge2, c2: collapse2, e3: emerge3 } = vals;
+
   return (
     <>
-      <ambientLight intensity={1.5} />
+      <ambientLight intensity={1.6} />
       <pointLight position={[10, 14, 10]} intensity={1.8} />
-      <pointLight position={[-8, 6, -8]} intensity={0.5} color="#a78bfa" />
-      <CameraRig progress={progresses[2]} />
-      <Floor />
-      <CoordAxes progresses={progresses} />
-      {/* Distance lines between point pairs */}
-      {points.length > 1 && (
-        <DistanceLines
-          points={points}
-          progresses={progresses}
-          activeIdx={activeIdx}
-          simExpanded={simExpanded}
-        />
-      )}
-      {/* Projection lines for ALL points */}
-      {points.map((pt, i) => (
-        <ProjectionLines
-          key={`proj-${i}`}
-          f1={pt.values.f1}
-          f2={pt.values.f2}
-          f3={pt.values.f3}
-          progresses={progresses}
-          opacity={i === activeIdx ? 1.0 : 0.35}
-          color={pt.color}
-        />
-      ))}
-      {/* Data points — render non-active first so active draws on top */}
+      <pointLight position={[-10, 8, -8]} intensity={0.5} color="#a78bfa" />
+      <CameraRig activeDim={activeDim} />
+      <Space1Axes activeDim={activeDim} collapse={collapse1} />
+      <Space2Axes activeDim={activeDim} emerge={emerge2} collapse={collapse2} />
+      <Space3Axis activeDim={activeDim} emerge2={emerge2} emerge3={emerge3} />
+      <DistanceLines
+        points={points.map((p) => ({ vals: p.vals, color: p.color }))}
+        activeDim={activeDim}
+        activeIdx={activeIdx}
+        simExpanded={simExpanded}
+      />
       {[
-        ...points
-          .map((pt, i) => ({ pt, i }))
-          .filter(({ i }) => i !== activeIdx),
-        ...points
-          .map((pt, i) => ({ pt, i }))
-          .filter(({ i }) => i === activeIdx),
-      ].map(({ pt, i }) => (
-        <DataPoint
-          key={`pt-${i}`}
-          f1={pt.values.f1}
-          f2={pt.values.f2}
-          f3={pt.values.f3}
-          f4={pt.values.f4}
-          f5={pt.values.f5}
-          f6={pt.values.f6}
-          f7={pt.values.f7}
-          progresses={progresses}
-          pointColor={pt.color}
+        ...points.map((p, i) => ({ p, i })).filter(({ i }) => i !== activeIdx),
+        ...points.map((p, i) => ({ p, i })).filter(({ i }) => i === activeIdx),
+      ].map(({ p, i }) => (
+        <MultiSpacePoint
+          key={i}
+          vals={p.vals}
+          activeDim={activeDim}
+          pointColor={p.color}
+          label={p.label}
           isActive={i === activeIdx}
-          label={pt.label}
-        />
-      ))}
-      {/* Ghost for ALL points */}
-      {points.map((pt, i) => (
-        <GhostPoint
-          key={`ghost-${i}`}
-          f1={pt.values.f1}
-          f2={pt.values.f2}
-          f3={pt.values.f3}
-          f4={pt.values.f4}
-          f5={pt.values.f5}
-          f6={pt.values.f6}
-          f7={pt.values.f7}
-          progresses={progresses}
-          pointColor={pt.color}
-          isActive={i === activeIdx}
+          emerge2={emerge2}
+          emerge3={emerge3}
+          collapse1={collapse1}
+          collapse2={collapse2}
         />
       ))}
       <OrbitControls enablePan enableZoom enableRotate makeDefault />
@@ -859,98 +859,70 @@ function DChartScene({
 // ─────────────────────────────────────────────────────────────
 // Main export
 // ─────────────────────────────────────────────────────────────
+interface FeatureSpaceTabProps {
+  allImages?: Array<{
+    label: string;
+    src?: string;
+    values: FeatureSpaceValues;
+    rawVec?: number[];
+  }>;
+}
 
 export default function FeatureSpaceTab({
   allImages,
 }: FeatureSpaceTabProps = {}) {
-  // Build point list: use real images if provided, else a default demo point
-  const points =
-    allImages && allImages.length > 0
-      ? allImages.map((img, i) => ({
-          label: img.label,
-          src: img.src,
-          values: img.values,
-          rawVec: img.rawVec,
-          color: POINT_PALETTE[i % POINT_PALETTE.length],
-        }))
-      : [
-          {
-            label: "示例",
-            src: undefined,
-            values: DEFAULT_VALUES,
-            rawVec: undefined,
-            color: POINT_PALETTE[0],
-          },
-        ];
+  const hasImages = allImages && allImages.length > 0;
+  const points = hasImages
+    ? allImages!.map((img, i) => ({
+        label: img.label,
+        src: img.src,
+        vals: img.values,
+        rawVec: img.rawVec,
+        color: POINT_PALETTE[i % POINT_PALETTE.length],
+      }))
+    : [];
 
   const [activeIdx, setActiveIdx] = useState(0);
   const [activeDim, setActiveDim] = useState(7);
-  const [progresses, setProgresses] = useState<number[]>([0, 0, 0, 0, 0, 0, 0]);
-  const animRef = useRef<number | null>(null);
-
-  // Clamp activeIdx when images change
-  const safeActive = Math.min(activeIdx, points.length - 1);
-
   const [simExpanded, setSimExpanded] = useState(false);
-
-  // Collapse sim panel when switching active point
+  const safeActive = Math.min(activeIdx, points.length - 1);
   useEffect(() => {
     setSimExpanded(false);
   }, [safeActive]);
 
-  // Distance helpers (operate on rawVec)
+  const FC = FEATURE_COLORS;
   const cosDist = (a: number[], b: number[]) => {
-    const dot = a.reduce((s, v, i) => s + v * b[i], 0);
-    const mA = Math.sqrt(a.reduce((s, v) => s + v * v, 0));
-    const mB = Math.sqrt(b.reduce((s, v) => s + v * v, 0));
+    const dot = a.reduce((s, v, k) => s + v * b[k], 0),
+      mA = Math.sqrt(a.reduce((s, v) => s + v * v, 0)),
+      mB = Math.sqrt(b.reduce((s, v) => s + v * v, 0));
     return mA && mB ? 1 - dot / (mA * mB) : NaN;
   };
   const eucDist = (a: number[], b: number[]) =>
-    Math.sqrt(a.reduce((s, v, i) => s + (v - b[i]) ** 2, 0));
+    Math.sqrt(a.reduce((s, v, k) => s + (v - b[k]) ** 2, 0));
   const manDist = (a: number[], b: number[]) =>
-    a.reduce((s, v, i) => s + Math.abs(v - b[i]), 0);
+    a.reduce((s, v, k) => s + Math.abs(v - b[k]), 0);
 
-  useEffect(() => {
-    const tick = () => {
-      setProgresses((prev) => {
-        let still = false;
-        const next = prev.map((p, i) => {
-          const target = activeDim >= i + 1 ? 0 : 1;
-          const diff = target - p;
-          if (Math.abs(diff) < 0.005) return target;
-          still = true;
-          return p + diff * 0.08;
-        });
-        if (still) animRef.current = requestAnimationFrame(tick);
-        return next;
-      });
-    };
-    if (animRef.current) cancelAnimationFrame(animRef.current);
-    animRef.current = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(animRef.current!);
-  }, [activeDim]);
-
-  const FC = FEATURE_COLORS;
+  const spaceHint =
+    activeDim >= 7
+      ? "空间1→平面 · 空间2→平面 · 空间3展开"
+      : activeDim >= 4
+        ? "空间1→平面 · 空间2展开"
+        : "空间1三维展开";
 
   return (
     <div className="h-full flex flex-col gap-2 overflow-hidden w-full">
-      {/* Top bar */}
-      <div className="flex items-center gap-2 shrink-0 overflow-hidden">
-        <div>
-          <p className="text-xs font-semibold text-foreground">
-            特征空间降维演示
-          </p>
-          <p className="text-[10px] text-muted-foreground">
-            当前展示 7 个维度的特征数据，逐级剥离后观察高维坍缩过程
-          </p>
-        </div>
+      <div className="shrink-0">
+        <p className="text-xs font-semibold text-foreground">
+          特征空间降维演示
+        </p>
+        <p className="text-[10px] text-muted-foreground">
+          {activeDim} 个维度 · {spaceHint}
+        </p>
       </div>
 
-      {/* Main layout */}
       <div className="flex gap-2 flex-1 min-h-0">
         {/* Left panel */}
         <div className="flex flex-col gap-2 w-52 overflow-y-auto overflow-x-hidden shrink-0">
-          {/* Dim selector */}
           <div className="shrink-0">
             <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground block mb-2">
               维度 (1D–7D)
@@ -960,264 +932,265 @@ export default function FeatureSpaceTab({
                 <button
                   key={dim}
                   onClick={() => setActiveDim(dim)}
-                  className={`flex-1 py-1.5 rounded-md text-xs font-bold transition-all duration-300 ${
-                    activeDim === dim
-                      ? "bg-foreground text-background shadow-md scale-105"
-                      : activeDim > dim
-                        ? "bg-foreground/20 text-foreground"
-                        : "bg-transparent text-muted-foreground hover:bg-muted"
-                  }`}
+                  className={`flex-1 py-1.5 rounded-md text-xs font-bold transition-all duration-300 ${activeDim === dim ? "bg-foreground text-background shadow-md scale-105" : activeDim > dim ? "bg-foreground/20 text-foreground" : "bg-transparent text-muted-foreground hover:bg-muted"}`}
                 >
                   {dim}
                 </button>
               ))}
             </div>
+            <div className="flex mt-1.5 rounded-md overflow-hidden border border-border text-[8px] font-mono select-none">
+              {[
+                {
+                  label: "空间 1",
+                  cols: 3,
+                  bg: "#f0f9ff",
+                  colors: [FC.f1, FC.f2, FC.f3],
+                },
+                {
+                  label: "空间 2",
+                  cols: 3,
+                  bg: "#fefce8",
+                  colors: [FC.f4, FC.f5, FC.f6],
+                },
+                { label: "空间3", cols: 1, bg: "#fdf4ff", colors: [FC.f7] },
+              ].map((g, gi) => (
+                <div
+                  key={gi}
+                  className="flex flex-col items-center py-1 gap-0.5"
+                  style={{ flex: g.cols, background: g.bg }}
+                >
+                  <div className="flex gap-0.5">
+                    {g.colors.map((c, ci) => (
+                      <div
+                        key={ci}
+                        className="w-2 h-2 rounded-full transition-opacity duration-500"
+                        style={{
+                          background: c,
+                          opacity: activeDim >= gi * 3 + ci + 1 ? 1 : 0.15,
+                        }}
+                      />
+                    ))}
+                  </div>
+                  <span className="text-muted-foreground leading-none">
+                    {g.label}
+                  </span>
+                </div>
+              ))}
+            </div>
+            {activeDim >= 4 && (
+              <div className="mt-1.5 px-2 py-1 rounded-md bg-amber-50 border border-amber-200 text-[9px] text-amber-700 leading-relaxed">
+                空间1已折叠为平面，成为空间2的底层基底
+              </div>
+            )}
+            {activeDim >= 7 && (
+              <div className="mt-1 px-2 py-1 rounded-md bg-purple-50 border border-purple-200 text-[9px] text-purple-700 leading-relaxed">
+                空间2已折叠为平面，成为空间3的底层基底
+              </div>
+            )}
           </div>
 
-          {/* Image list */}
           <div className="shrink-0">
             <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground block mb-2">
               数据点 ({points.length})
             </span>
             <div className="space-y-1.5">
               {points.map((pt, i) => {
-                const v = pt.values;
-                const isAct = i === safeActive;
+                const isAct = i === safeActive,
+                  v = pt.vals;
                 return (
-                  <button
-                    key={i}
-                    onClick={() => setActiveIdx(i)}
-                    className={`w-full text-left rounded-lg px-2.5 py-2 transition-all border ${
-                      isAct
-                        ? "border-current bg-background shadow-sm"
-                        : "border-transparent hover:bg-muted"
-                    }`}
-                    style={{ color: isAct ? pt.color : undefined }}
-                  >
-                    <div className="flex items-center gap-2 mb-1">
-                      {pt.src ? (
-                        <img
-                          src={pt.src}
-                          alt={pt.label}
-                          className="w-8 h-8 rounded-md object-cover shrink-0"
-                          style={{
-                            outline: `2px solid ${pt.color}`,
-                            outlineOffset: "1px",
-                          }}
-                        />
-                      ) : (
-                        <div
-                          className="w-8 h-8 rounded-md shrink-0 flex items-center justify-center"
-                          style={{
-                            background: pt.color + "22",
-                            border: `2px solid ${pt.color}`,
-                          }}
-                        >
-                          <span
-                            className="text-[10px] font-bold"
-                            style={{ color: pt.color }}
+                  <div key={i}>
+                    <div
+                      onClick={() => setActiveIdx(i)}
+                      className={`rounded-lg px-2.5 py-2 transition-all border cursor-pointer ${isAct ? "border-current bg-background shadow-sm" : "border-transparent hover:bg-muted"}`}
+                      style={{ color: isAct ? pt.color : undefined }}
+                    >
+                      <div className="flex items-center gap-2 mb-1">
+                        {pt.src ? (
+                          <img
+                            src={pt.src}
+                            alt={pt.label}
+                            className="w-8 h-8 rounded-md object-cover shrink-0"
+                            style={{
+                              outline: `2px solid ${pt.color}`,
+                              outlineOffset: "1px",
+                            }}
+                          />
+                        ) : (
+                          <div
+                            className="w-8 h-8 rounded-md shrink-0 flex items-center justify-center text-[10px] font-bold"
+                            style={{
+                              background: pt.color + "22",
+                              border: `2px solid ${pt.color}`,
+                              color: pt.color,
+                            }}
                           >
                             {pt.label}
-                          </span>
-                        </div>
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1">
+                          </div>
+                        )}
+                        <div className="flex items-center gap-1.5">
                           <div
                             className="w-2 h-2 rounded-full shrink-0"
                             style={{ background: pt.color }}
                           />
-                          <span className="text-xs font-semibold truncate text-foreground">
+                          <span className="text-xs font-semibold text-foreground">
                             {pt.label}
                           </span>
                         </div>
                       </div>
-                    </div>
-                    <div className="font-mono text-[9px] text-muted-foreground leading-relaxed pl-4">
-                      <span style={{ color: FC.f1 }}>
-                        X:{v.f1 >= 0 ? "+" : ""}
-                        {v.f1.toFixed(1)}
-                      </span>{" "}
-                      <span
-                        style={{
-                          color: FC.f2,
-                          opacity: activeDim >= 2 ? 1 : 0.3,
-                        }}
-                      >
-                        Z:{v.f2 >= 0 ? "+" : ""}
-                        {v.f2.toFixed(1)}
-                      </span>{" "}
-                      <span
-                        style={{
-                          color: FC.f3,
-                          opacity: activeDim >= 3 ? 1 : 0.3,
-                        }}
-                      >
-                        Y:{v.f3 >= 0 ? "+" : ""}
-                        {v.f3.toFixed(1)}
-                      </span>
-                      <br />
-                      <span
-                        style={{
-                          color: FC.f4,
-                          opacity: activeDim >= 4 ? 1 : 0.3,
-                        }}
-                      >
-                        {v.f4.toFixed(0)}°
-                      </span>{" "}
-                      <span
-                        style={{
-                          color: FC.f5,
-                          opacity: activeDim >= 5 ? 1 : 0.3,
-                        }}
-                      >
-                        sz:{v.f5.toFixed(2)}
-                      </span>{" "}
-                      <span
-                        style={{
-                          color: FC.f6,
-                          opacity: activeDim >= 6 ? 1 : 0.3,
-                        }}
-                      >
-                        a:{v.f6.toFixed(2)}
-                      </span>{" "}
-                      <span
-                        style={{
-                          color: FC.f7,
-                          opacity: activeDim >= 7 ? 1 : 0.3,
-                        }}
-                      >
-                        sh:{v.f7.toFixed(2)}
-                      </span>
-                    </div>
-                    {/* Ghost info — only for active point when dimensions are collapsed */}
-                    {isAct &&
-                      activeDim < 7 &&
-                      (() => {
-                        const lost: string[] = [];
-                        if (activeDim < 2) lost.push(`Z(${v.f2.toFixed(1)})`);
-                        if (activeDim < 3) lost.push(`Y(${v.f3.toFixed(1)})`);
-                        if (activeDim < 4)
-                          lost.push(`色相(${v.f4.toFixed(0)}°)`);
-                        if (activeDim < 5)
-                          lost.push(`尺寸(${v.f5.toFixed(2)})`);
-                        if (activeDim < 6)
-                          lost.push(`透明(${v.f6.toFixed(2)})`);
-                        if (activeDim < 7)
-                          lost.push(`形状(${v.f7.toFixed(2)})`);
-                        return lost.length > 0 ? (
-                          <div
-                            className="mt-1.5 mx-0 rounded-md px-2 py-1.5 text-[9px] leading-relaxed"
-                            style={{
-                              background: pt.color + "12",
-                              border: `1px solid ${pt.color}44`,
-                            }}
-                          >
-                            <div
-                              className="font-bold mb-0.5"
-                              style={{ color: pt.color }}
-                            >
-                              👻 高维原貌 (幽灵)
-                            </div>
-                            <div className="text-muted-foreground">
-                              丢失: {lost.join(" · ")}
-                            </div>
+                      <div className="font-mono text-[9px] leading-relaxed pl-2 space-y-0.5">
+                        {activeDim >= 1 && (
+                          <div>
+                            <span className="text-muted-foreground">S1:</span>
+                            <span style={{ color: FC.f1 }}>
+                              {" "}
+                              X{v.f1 >= 0 ? "+" : ""}
+                              {v.f1.toFixed(1)}
+                            </span>
+                            {activeDim >= 2 && (
+                              <span style={{ color: FC.f2 }}>
+                                {" "}
+                                Z{v.f2 >= 0 ? "+" : ""}
+                                {v.f2.toFixed(1)}
+                              </span>
+                            )}
+                            {activeDim >= 3 && (
+                              <span style={{ color: FC.f3 }}>
+                                {" "}
+                                Y{v.f3 >= 0 ? "+" : ""}
+                                {v.f3.toFixed(1)}
+                              </span>
+                            )}
                           </div>
-                        ) : null;
-                      })()}
-                    {/* Similarity panel */}
-                    {isAct &&
-                      points.length > 1 &&
-                      (() => {
-                        const vecA = pt.rawVec;
-                        const rows = points
-                          .map((other, oi) => ({ other, oi }))
-                          .filter(({ oi }) => oi !== i)
-                          .map(({ other, oi }) => {
-                            const vecB = other.rawVec;
-                            if (!vecA || !vecB)
-                              return {
-                                oi,
-                                other,
-                                cos: NaN,
-                                euc: NaN,
-                                man: NaN,
-                              };
-                            const dot = vecA.reduce(
-                              (s: number, v: number, k: number) =>
-                                s + v * vecB[k],
-                              0,
-                            );
-                            const mA = Math.sqrt(
-                              vecA.reduce(
-                                (s: number, v: number) => s + v * v,
-                                0,
-                              ),
-                            );
-                            const mB = Math.sqrt(
-                              vecB.reduce(
-                                (s: number, v: number) => s + v * v,
-                                0,
-                              ),
-                            );
-                            const cos = mA && mB ? 1 - dot / (mA * mB) : NaN;
-                            const euc = Math.sqrt(
-                              vecA.reduce(
-                                (s: number, v: number, k: number) =>
-                                  s + (v - vecB[k]) ** 2,
-                                0,
-                              ),
-                            );
-                            const man = vecA.reduce(
-                              (s: number, v: number, k: number) =>
-                                s + Math.abs(v - vecB[k]),
-                              0,
-                            );
-                            return { oi, other, cos, euc, man };
-                          });
-                        const valid = (arr: number[]) =>
-                          arr.filter((v: number) => !isNaN(v));
-                        const allCos = valid(rows.map((r) => r.cos));
-                        const allEuc = valid(rows.map((r) => r.euc));
-                        const allMan = valid(rows.map((r) => r.man));
-                        const norm = (v: number, vals: number[]) => {
-                          if (!vals.length) return 0;
-                          const lo = Math.min(...vals),
-                            hi = Math.max(...vals);
-                          return hi === lo ? 0.5 : (v - lo) / (hi - lo);
-                        };
-                        return (
-                          <div className="mt-1.5">
+                        )}
+                        {activeDim >= 4 && (
+                          <div>
+                            <span className="text-muted-foreground">S2:</span>
+                            <span style={{ color: FC.f4 }}>
+                              {" "}
+                              {v.f4.toFixed(0)}°
+                            </span>
+                            {activeDim >= 5 && (
+                              <span style={{ color: FC.f5 }}>
+                                {" "}
+                                {v.f5.toFixed(2)}
+                              </span>
+                            )}
+                            {activeDim >= 6 && (
+                              <span style={{ color: FC.f6 }}>
+                                {" "}
+                                {v.f6.toFixed(2)}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {activeDim >= 7 && (
+                          <div>
+                            <span className="text-muted-foreground">S3:</span>
+                            <span style={{ color: FC.f7 }}>
+                              {" "}
+                              {v.f7.toFixed(2)}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      {isAct &&
+                        activeDim < 7 &&
+                        (() => {
+                          const lost: string[] = [];
+                          if (activeDim < 2) lost.push(`Z(${v.f2.toFixed(1)})`);
+                          if (activeDim < 3) lost.push(`Y(${v.f3.toFixed(1)})`);
+                          if (activeDim < 4)
+                            lost.push(`色相(${v.f4.toFixed(0)}°)`);
+                          if (activeDim < 5)
+                            lost.push(`大小(${v.f5.toFixed(2)})`);
+                          if (activeDim < 6)
+                            lost.push(`透明(${v.f6.toFixed(2)})`);
+                          if (activeDim < 7)
+                            lost.push(`形状(${v.f7.toFixed(2)})`);
+                          return lost.length > 0 ? (
                             <div
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSimExpanded((v) => !v);
-                              }}
-                              className="w-full flex items-center justify-between px-2 py-1 rounded-md text-[10px] font-semibold transition-colors cursor-pointer select-none"
+                              className="mt-1.5 rounded-md px-2 py-1.5 text-[9px]"
                               style={{
-                                background: pt.color + "18",
-                                color: pt.color,
+                                background: pt.color + "12",
+                                border: `1px solid ${pt.color}44`,
                               }}
                             >
-                              <span>📐 相似度距离</span>
-                              <span>{simExpanded ? "▲" : "▼"}</span>
+                              <div
+                                className="font-bold mb-0.5"
+                                style={{ color: pt.color }}
+                              >
+                                👻 高维原貌
+                              </div>
+                              <div className="text-muted-foreground">
+                                丢失: {lost.join(" · ")}
+                              </div>
                             </div>
-                            {simExpanded && (
+                          ) : null;
+                        })()}
+                    </div>
+                    {isAct && pt.rawVec && (
+                      <div className="mt-1">
+                        <div
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setSimExpanded((s) => !s);
+                          }}
+                          className="w-full flex items-center justify-between px-2.5 py-1 rounded-md text-[10px] font-semibold cursor-pointer select-none"
+                          style={{
+                            background: pt.color + "18",
+                            color: pt.color,
+                          }}
+                        >
+                          <span>📐 相似度距离</span>
+                          <span>{simExpanded ? "▲" : "▼"}</span>
+                        </div>
+                        {simExpanded &&
+                          (() => {
+                            const vecA = pt.rawVec!;
+                            const rows = points
+                              .map((other, oi) => ({ other, oi }))
+                              .filter(({ oi }) => oi !== i)
+                              .map(({ other, oi }) => {
+                                const vecB = other.rawVec;
+                                if (!vecB)
+                                  return {
+                                    oi,
+                                    other,
+                                    cos: NaN,
+                                    euc: NaN,
+                                    man: NaN,
+                                  };
+                                return {
+                                  oi,
+                                  other,
+                                  cos: cosDist(vecA, vecB),
+                                  euc: eucDist(vecA, vecB),
+                                  man: manDist(vecA, vecB),
+                                };
+                              });
+                            const valid = (arr: number[]) =>
+                              arr.filter((v) => !isNaN(v));
+                            const norm = (v: number, vals: number[]) => {
+                              const lo = Math.min(...vals),
+                                hi = Math.max(...vals);
+                              return hi === lo ? 0.5 : (v - lo) / (hi - lo);
+                            };
+                            const allCos = valid(rows.map((r) => r.cos)),
+                              allEuc = valid(rows.map((r) => r.euc)),
+                              allMan = valid(rows.map((r) => r.man));
+                            return (
                               <div
                                 className="mt-1 rounded-md border overflow-hidden"
                                 style={{ borderColor: pt.color + "44" }}
                               >
                                 {rows.map(({ oi, other, cos, euc, man }) => {
-                                  const nCos = norm(cos, allCos);
-                                  const nEuc = norm(euc, allEuc);
-                                  const nMan = norm(man, allMan);
-                                  const bar = (n: number, color: string) => (
+                                  const bar = (n: number, col: string) => (
                                     <div className="h-1 bg-muted rounded-full overflow-hidden mt-0.5">
                                       <div
                                         className="h-full rounded-full"
                                         style={{
                                           width: `${(isNaN(n) ? 0 : n) * 100}%`,
-                                          background: `linear-gradient(90deg,${color}55,${color})`,
+                                          background: `linear-gradient(90deg,${col}55,${col})`,
                                         }}
                                       />
                                     </div>
@@ -1225,7 +1198,7 @@ export default function FeatureSpaceTab({
                                   return (
                                     <div
                                       key={oi}
-                                      className="px-2.5 py-2 border-t first:border-t-0 text-[10px]"
+                                      className="px-2.5 py-2 border-t first:border-t-0 text-[9px]"
                                       style={{ borderColor: pt.color + "22" }}
                                     >
                                       <div className="flex items-center gap-1.5 mb-1.5">
@@ -1253,50 +1226,56 @@ export default function FeatureSpaceTab({
                                           {other.label}
                                         </span>
                                       </div>
-                                      <div className="space-y-1.5">
+                                      <div className="space-y-1">
                                         <div>
-                                          <div className="flex justify-between text-muted-foreground">
-                                            <span>余弦距离</span>
+                                          <div className="flex justify-between">
+                                            <span className="text-muted-foreground">
+                                              余弦
+                                            </span>
                                             <span className="font-mono text-foreground">
                                               {isNaN(cos)
                                                 ? "—"
                                                 : cos.toFixed(4)}
                                             </span>
                                           </div>
-                                          {bar(nCos, other.color)}
+                                          {bar(norm(cos, allCos), other.color)}
                                         </div>
                                         <div>
-                                          <div className="flex justify-between text-muted-foreground">
-                                            <span>欧式距离</span>
+                                          <div className="flex justify-between">
+                                            <span className="text-muted-foreground">
+                                              欧式
+                                            </span>
                                             <span className="font-mono text-foreground">
                                               {isNaN(euc)
                                                 ? "—"
                                                 : euc.toFixed(3)}
                                             </span>
                                           </div>
-                                          {bar(nEuc, other.color)}
+                                          {bar(norm(euc, allEuc), other.color)}
                                         </div>
                                         <div>
-                                          <div className="flex justify-between text-muted-foreground">
-                                            <span>曼哈顿距离</span>
+                                          <div className="flex justify-between">
+                                            <span className="text-muted-foreground">
+                                              曼哈顿
+                                            </span>
                                             <span className="font-mono text-foreground">
                                               {isNaN(man)
                                                 ? "—"
                                                 : man.toFixed(1)}
                                             </span>
                                           </div>
-                                          {bar(nMan, other.color)}
+                                          {bar(norm(man, allMan), other.color)}
                                         </div>
                                       </div>
                                     </div>
                                   );
                                 })}
                               </div>
-                            )}
-                          </div>
-                        );
-                      })()}
-                  </button>
+                            );
+                          })()}
+                      </div>
+                    )}
+                  </div>
                 );
               })}
             </div>
@@ -1304,31 +1283,80 @@ export default function FeatureSpaceTab({
         </div>
 
         {/* 3D Canvas */}
-        <div className="flex-1 rounded-xl overflow-hidden border border-border relative bg-slate-100 dark:bg-slate-900 min-w-0">
-          <Canvas
-            camera={{ position: [10, 8, 10], fov: 48 }}
-            gl={{ antialias: true }}
-          >
-            <color attach="background" args={["#f1f5f9"]} />
-            <DChartScene
-              points={points}
-              activeIdx={safeActive}
-              progresses={progresses}
-              simExpanded={simExpanded}
-            />
-          </Canvas>
-          {/* Status badge */}
-          <div className="absolute top-3 right-3 bg-background/80 backdrop-blur-md rounded-lg px-3 py-1.5 text-right shadow-md border border-border">
-            <div className="font-mono text-[10px] text-muted-foreground mb-0.5">
-              当前保留维度
+        <div className="flex-1 rounded-xl overflow-hidden border border-border relative bg-slate-50 min-w-0">
+          {!hasImages && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center px-8">
+              <div className="text-4xl opacity-30">🌐</div>
+              <p className="text-sm font-semibold text-muted-foreground">
+                请先在左侧选择图片
+              </p>
+              <p className="text-xs text-muted-foreground/70">
+                选择图片后，其特征向量将被映射到几何空间中展示
+              </p>
             </div>
-            <div className="font-mono text-2xl font-black text-foreground leading-none">
-              {activeDim}
-              <span className="text-sm font-normal text-muted-foreground ml-1">
-                维
-              </span>
-            </div>
-          </div>
+          )}
+          {hasImages && (
+            <>
+              <Canvas
+                camera={{ position: [18, 12, 28], fov: 50 }}
+                gl={{ antialias: true }}
+              >
+                <color attach="background" args={["#f8fafc"]} />
+                <Scene
+                  points={points}
+                  activeDim={activeDim}
+                  activeIdx={safeActive}
+                  simExpanded={simExpanded}
+                />
+              </Canvas>
+              <div className="absolute top-3 right-3 bg-background/80 backdrop-blur-md rounded-lg px-3 py-1.5 text-right shadow-md border border-border">
+                <div className="font-mono text-[10px] text-muted-foreground mb-0.5">
+                  当前保留维度
+                </div>
+                <div className="font-mono text-2xl font-black text-foreground leading-none">
+                  {activeDim}
+                  <span className="text-sm font-normal text-muted-foreground ml-1">
+                    维
+                  </span>
+                </div>
+              </div>
+              <div className="absolute bottom-3 left-3 flex flex-col gap-1">
+                {[
+                  {
+                    label: "空间1: f1-f3 主XZY",
+                    colors: [FC.f1, FC.f2, FC.f3],
+                    minDim: 1,
+                  },
+                  {
+                    label: "空间2: f4-f6 ↑展开",
+                    colors: [FC.f4, FC.f5, FC.f6],
+                    minDim: 4,
+                  },
+                  { label: "空间3: f7 ↑↑展开", colors: [FC.f7], minDim: 7 },
+                ]
+                  .filter((g) => activeDim >= g.minDim)
+                  .map((g) => (
+                    <div
+                      key={g.label}
+                      className="flex items-center gap-1.5 bg-background/80 backdrop-blur-sm rounded-md px-2 py-1 border border-border"
+                    >
+                      <div className="flex gap-0.5">
+                        {g.colors.map((c, ci) => (
+                          <div
+                            key={ci}
+                            className="w-2.5 h-2.5 rounded-full"
+                            style={{ background: c }}
+                          />
+                        ))}
+                      </div>
+                      <span className="text-[9px] text-muted-foreground">
+                        {g.label}
+                      </span>
+                    </div>
+                  ))}
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
