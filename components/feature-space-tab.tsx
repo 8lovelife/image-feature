@@ -78,8 +78,7 @@ function CameraRig({ activeDim }: { activeDim: number }) {
   const targetLookAt = configs[cfgIdx].lookAt;
 
   const prevCfgIdx = useRef(cfgIdx);
-  const isTransiting = useRef(false);
-  // Init smoothPos to targetPos (not camera.position) so there's no drift on mount
+  const isAnimating = useRef(false);
   const smoothPos = useRef(targetPos.clone());
   const smoothLookAt = useRef(targetLookAt.clone());
 
@@ -87,32 +86,24 @@ function CameraRig({ activeDim }: { activeDim: number }) {
     if (cfgIdx !== prevCfgIdx.current) {
       prevCfgIdx.current = cfgIdx;
       smoothPos.current.copy(camera.position);
-      smoothLookAt.current.copy(camera.position).lerp(targetLookAt, 0);
-      isTransiting.current = true;
+      isAnimating.current = true;
     }
   }, [cfgIdx]);
 
   useFrame((_, delta) => {
-    if (!isTransiting.current) return;
-
+    if (!isAnimating.current) return;
     const dt = Math.min(delta, 0.05);
-    // Same halflife as scene animation for consistency
-    const k = 1 - Math.pow(0.5, dt / 0.8);
-
+    const k = 1 - Math.pow(0.5, dt / 0.75);
     smoothPos.current.lerp(targetPos, k);
     smoothLookAt.current.lerp(targetLookAt, k);
-
     camera.position.copy(smoothPos.current);
     camera.lookAt(smoothLookAt.current);
     camera.updateProjectionMatrix();
-
-    // Converged — release to OrbitControls (NO position snap, just stop)
     if (
-      smoothPos.current.distanceTo(targetPos) < 0.08 &&
-      smoothLookAt.current.distanceTo(targetLookAt) < 0.08
-    ) {
-      isTransiting.current = false;
-    }
+      smoothPos.current.distanceTo(targetPos) < 0.005 &&
+      smoothLookAt.current.distanceTo(targetLookAt) < 0.005
+    )
+      isAnimating.current = false;
   });
   return null;
 }
@@ -820,28 +811,25 @@ function Scene({
 
   useFrame((_, delta) => {
     const dt = Math.min(delta, 0.05);
-    const k = 1 - Math.pow(0.5, dt / 0.6);
+    // halflife 0.55s — feels snappy but smooth
+    const k = 1 - Math.pow(0.5, dt / 0.55);
     const r = refs.current;
     const targets = {
-      c1: activeDim >= 4 ? 1 : 0, // space1 Y collapse
-      d4: activeDim >= 4 ? 1 : 0, // space2 X axis (f4)
-      d5: activeDim >= 5 ? 1 : 0, // space2 Z axis (f5)
-      d6: activeDim >= 6 ? 1 : 0, // space2 Y axis (f6)
-      c2: activeDim >= 7 ? 1 : 0, // space2 Y collapse
-      d7: activeDim >= 7 ? 1 : 0, // space3 X axis (f7)
+      c1: activeDim >= 4 ? 1 : 0,
+      d4: activeDim >= 4 ? 1 : 0,
+      d5: activeDim >= 5 ? 1 : 0,
+      d6: activeDim >= 6 ? 1 : 0,
+      c2: activeDim >= 7 ? 1 : 0,
+      d7: activeDim >= 7 ? 1 : 0,
     };
-    let changed = false;
+    // Pure exponential — NO snap, NO threshold jump
+    // The difference shrinks by factor k each frame; visually indistinguishable from target after ~2s
+    let needsUpdate = false;
     const move = (cur: number, target: number) => {
-      const next = cur + (target - cur) * k;
-      if (Math.abs(next - cur) < 0.0001) {
-        if (cur !== target) {
-          changed = true;
-          return target;
-        }
-        return cur;
-      }
-      changed = true;
-      return next;
+      const diff = target - cur;
+      if (Math.abs(diff) < 1e-5) return cur; // truly converged, stop updating
+      needsUpdate = true;
+      return cur + diff * k;
     };
     r.c1 = move(r.c1, targets.c1);
     r.d4 = move(r.d4, targets.d4);
@@ -849,7 +837,7 @@ function Scene({
     r.d6 = move(r.d6, targets.d6);
     r.c2 = move(r.c2, targets.c2);
     r.d7 = move(r.d7, targets.d7);
-    if (changed) setProg({ ...r });
+    if (needsUpdate) setProg({ ...r });
   });
 
   // Derived values for axes/planes (use max of d4/d5/d6 to know if space2 is visible at all)
