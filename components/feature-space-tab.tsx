@@ -67,36 +67,52 @@ function toSpace3X(vals: FeatureSpaceValues): number {
 // ─────────────────────────────────────────────────────────────
 function CameraRig({ activeDim }: { activeDim: number }) {
   const { camera } = useThree();
-  const prevDim = useRef(activeDim);
-  const settling = useRef(0);
 
-  useEffect(() => {
-    if (activeDim !== prevDim.current) {
-      prevDim.current = activeDim;
-      settling.current = 100;
-    }
-  }, [activeDim]);
-
-  // Each space has its own camera position + lookAt target
-  // Space 1 (1-3): focus on origin
-  // Space 2 (4-6): focus on y≈10 (where space2 emerges)
-  // Space 3 (7):   focus on y≈20
   const configs = [
-    { pos: new THREE.Vector3(18, 12, 28), lookAt: new THREE.Vector3(0, 0, 0) }, // space 1 — pulled back to see full grid
-    { pos: new THREE.Vector3(16, 18, 26), lookAt: new THREE.Vector3(0, 10, 0) }, // space 2
-    { pos: new THREE.Vector3(16, 28, 26), lookAt: new THREE.Vector3(0, 20, 0) }, // space 3
+    { pos: new THREE.Vector3(18, 12, 28), lookAt: new THREE.Vector3(0, 0, 0) }, // space1: look at origin
+    { pos: new THREE.Vector3(20, 16, 30), lookAt: new THREE.Vector3(0, 5, 0) }, // space2: look at midpoint, pulled back
+    { pos: new THREE.Vector3(22, 24, 34), lookAt: new THREE.Vector3(0, 13, 0) }, // space3: look at midpoint s2+s3
   ];
   const cfgIdx = activeDim >= 7 ? 2 : activeDim >= 4 ? 1 : 0;
-  const cfg = configs[cfgIdx];
-  const lookAtRef = useRef(cfg.lookAt.clone());
+  const targetPos = configs[cfgIdx].pos;
+  const targetLookAt = configs[cfgIdx].lookAt;
 
-  useFrame(() => {
-    if (settling.current <= 0) return;
-    settling.current -= 1;
-    camera.position.lerp(cfg.pos, 0.055);
-    lookAtRef.current.lerp(cfg.lookAt, 0.055);
-    camera.lookAt(lookAtRef.current);
+  const prevCfgIdx = useRef(cfgIdx);
+  const isTransiting = useRef(false);
+  // Init smoothPos to targetPos (not camera.position) so there's no drift on mount
+  const smoothPos = useRef(targetPos.clone());
+  const smoothLookAt = useRef(targetLookAt.clone());
+
+  useEffect(() => {
+    if (cfgIdx !== prevCfgIdx.current) {
+      prevCfgIdx.current = cfgIdx;
+      smoothPos.current.copy(camera.position);
+      smoothLookAt.current.copy(camera.position).lerp(targetLookAt, 0);
+      isTransiting.current = true;
+    }
+  }, [cfgIdx]);
+
+  useFrame((_, delta) => {
+    if (!isTransiting.current) return;
+
+    const dt = Math.min(delta, 0.05);
+    // Same halflife as scene animation for consistency
+    const k = 1 - Math.pow(0.5, dt / 0.8);
+
+    smoothPos.current.lerp(targetPos, k);
+    smoothLookAt.current.lerp(targetLookAt, k);
+
+    camera.position.copy(smoothPos.current);
+    camera.lookAt(smoothLookAt.current);
     camera.updateProjectionMatrix();
+
+    // Converged — release to OrbitControls (NO position snap, just stop)
+    if (
+      smoothPos.current.distanceTo(targetPos) < 0.08 &&
+      smoothLookAt.current.distanceTo(targetLookAt) < 0.08
+    ) {
+      isTransiting.current = false;
+    }
   });
   return null;
 }
@@ -556,6 +572,9 @@ function MultiSpacePoint({
   emerge3,
   collapse1,
   collapse2,
+  p4,
+  p5,
+  p6,
 }: {
   vals: FeatureSpaceValues;
   activeDim: number;
@@ -566,21 +585,26 @@ function MultiSpacePoint({
   emerge3: number;
   collapse1: number;
   collapse2: number;
+  p4: number;
+  p5: number;
+  p6: number;
 }) {
-  // Space 1 world position
+  // Space 1: Y collapses as space2 emerges
   const pos1 = new THREE.Vector3(
     activeDim >= 1 ? vals.f1 : 0,
-    activeDim >= 3 ? vals.f3 : 0,
+    activeDim >= 3 ? vals.f3 * (1 - collapse1) : 0,
     activeDim >= 2 ? vals.f2 : 0,
   );
-  // Space 2 world position (local + y-offset)
+  // Space 2: each axis activated independently by its own progress
+  // p4 drives X (f4/色相), p5 drives Z (f5/大小), p6 drives Y (f6/透明)
   const s2local = toSpace2(vals);
+  const s2yBase = lerp(0, 10, emerge2); // floor of space2 rises with emerge2
   const pos2 = new THREE.Vector3(
-    s2local.x * emerge2,
-    lerp(0, 10, emerge2) + s2local.y * emerge2,
-    s2local.z * emerge2,
+    s2local.x * p4, // X: grows when dim4 activates
+    s2yBase + s2local.y * p6 * (1 - collapse2), // Y: grows when dim6 activates
+    s2local.z * p5, // Z: grows when dim5 activates
   );
-  // Space 3 world position
+  // Space 3: single X axis driven by p7 (emerge3)
   const s3x = toSpace3X(vals);
   const pos3 = new THREE.Vector3(
     s3x * emerge3,
@@ -703,17 +727,19 @@ function DistanceLines({
   activeDim,
   activeIdx,
   simExpanded,
+  collapse1,
 }: {
   points: Array<{ vals: FeatureSpaceValues; color: string }>;
   activeDim: number;
   activeIdx: number;
   simExpanded: boolean;
+  collapse1: number;
 }) {
   const positions = points.map(
     (pt) =>
       new THREE.Vector3(
         activeDim >= 1 ? pt.vals.f1 : 0,
-        activeDim >= 3 ? pt.vals.f3 : 0,
+        activeDim >= 3 ? pt.vals.f3 * (1 - collapse1) : 0,
         activeDim >= 2 ? pt.vals.f2 : 0,
       ),
   );
@@ -778,46 +804,63 @@ function Scene({
   activeIdx: number;
   simExpanded: boolean;
 }) {
-  const collapseRef1 = useRef(0),
-    emerge2Ref = useRef(0);
-  const collapseRef2 = useRef(0),
-    emerge3Ref = useRef(0);
-  // Use state only to trigger re-render; refs drive the actual values
-  const [vals, setVals] = useState({ c1: 0, e2: 0, c2: 0, e3: 0 });
-
-  const tC1 = activeDim >= 4 ? 1 : 0,
-    tE2 = activeDim >= 4 ? 1 : 0;
-  const tC2 = activeDim >= 7 ? 1 : 0,
-    tE3 = activeDim >= 7 ? 1 : 0;
-
-  // Eased lerp for smooth deceleration
-  const smoothStep = (t: number) => t * t * (3 - 2 * t);
-
-  useFrame((_, delta) => {
-    // Clamp delta to avoid huge jumps on tab-switch
-    const dt = Math.min(delta, 0.05);
-    const sp = dt * 1.4; // slower = smoother
-    let changed = false;
-    const move = (cur: number, target: number) => {
-      const diff = target - cur;
-      if (Math.abs(diff) < 0.0005) return target;
-      changed = true;
-      return cur + diff * sp;
-    };
-    collapseRef1.current = move(collapseRef1.current, tC1);
-    emerge2Ref.current = move(emerge2Ref.current, tE2);
-    collapseRef2.current = move(collapseRef2.current, tC2);
-    emerge3Ref.current = move(emerge3Ref.current, tE3);
-    if (changed)
-      setVals({
-        c1: collapseRef1.current,
-        e2: emerge2Ref.current,
-        c2: collapseRef2.current,
-        e3: emerge3Ref.current,
-      });
+  // Per-dimension smooth progress (0→1 when that dim activates, 1→0 when deactivated)
+  // Space1: dims 1-3 via collapse1 (Y folds when dim4 activates)
+  // Space2: dims 4,5,6 each get their own axis progress
+  // Space3: dim7
+  const refs = useRef({ c1: 0, d4: 0, d5: 0, d6: 0, c2: 0, d7: 0 });
+  const [prog, setProg] = useState({
+    c1: 0,
+    d4: 0,
+    d5: 0,
+    d6: 0,
+    c2: 0,
+    d7: 0,
   });
 
-  const { c1: collapse1, e2: emerge2, c2: collapse2, e3: emerge3 } = vals;
+  useFrame((_, delta) => {
+    const dt = Math.min(delta, 0.05);
+    const k = 1 - Math.pow(0.5, dt / 0.6);
+    const r = refs.current;
+    const targets = {
+      c1: activeDim >= 4 ? 1 : 0, // space1 Y collapse
+      d4: activeDim >= 4 ? 1 : 0, // space2 X axis (f4)
+      d5: activeDim >= 5 ? 1 : 0, // space2 Z axis (f5)
+      d6: activeDim >= 6 ? 1 : 0, // space2 Y axis (f6)
+      c2: activeDim >= 7 ? 1 : 0, // space2 Y collapse
+      d7: activeDim >= 7 ? 1 : 0, // space3 X axis (f7)
+    };
+    let changed = false;
+    const move = (cur: number, target: number) => {
+      const next = cur + (target - cur) * k;
+      if (Math.abs(next - cur) < 0.0001) {
+        if (cur !== target) {
+          changed = true;
+          return target;
+        }
+        return cur;
+      }
+      changed = true;
+      return next;
+    };
+    r.c1 = move(r.c1, targets.c1);
+    r.d4 = move(r.d4, targets.d4);
+    r.d5 = move(r.d5, targets.d5);
+    r.d6 = move(r.d6, targets.d6);
+    r.c2 = move(r.c2, targets.c2);
+    r.d7 = move(r.d7, targets.d7);
+    if (changed) setProg({ ...r });
+  });
+
+  // Derived values for axes/planes (use max of d4/d5/d6 to know if space2 is visible at all)
+  const collapse1 = prog.c1;
+  const emerge2 = Math.max(prog.d4, prog.d5, prog.d6); // space2 visible when any axis active
+  const collapse2 = prog.c2;
+  const emerge3 = prog.d7;
+  // Per-axis progress for point position in space2
+  const p4 = prog.d4,
+    p5 = prog.d5,
+    p6 = prog.d6;
 
   return (
     <>
@@ -833,6 +876,7 @@ function Scene({
         activeDim={activeDim}
         activeIdx={activeIdx}
         simExpanded={simExpanded}
+        collapse1={collapse1}
       />
       {[
         ...points.map((p, i) => ({ p, i })).filter(({ i }) => i !== activeIdx),
@@ -849,6 +893,9 @@ function Scene({
           emerge3={emerge3}
           collapse1={collapse1}
           collapse2={collapse2}
+          p4={p4}
+          p5={p5}
+          p6={p6}
         />
       ))}
       <OrbitControls enablePan enableZoom enableRotate makeDefault />
