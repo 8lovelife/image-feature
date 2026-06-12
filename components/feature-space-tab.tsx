@@ -66,12 +66,12 @@ function toSpace3X(vals: FeatureSpaceValues): number {
 // Camera rig
 // ─────────────────────────────────────────────────────────────
 function CameraRig({ activeDim }: { activeDim: number }) {
-  const { camera } = useThree();
+  const { camera, get } = useThree();
 
   const configs = [
-    { pos: new THREE.Vector3(18, 12, 28), lookAt: new THREE.Vector3(0, 0, 0) }, // space1: look at origin
-    { pos: new THREE.Vector3(20, 16, 30), lookAt: new THREE.Vector3(0, 5, 0) }, // space2: look at midpoint, pulled back
-    { pos: new THREE.Vector3(22, 24, 34), lookAt: new THREE.Vector3(0, 13, 0) }, // space3: look at midpoint s2+s3
+    { pos: new THREE.Vector3(18, 12, 28), lookAt: new THREE.Vector3(0, 0, 0) },
+    { pos: new THREE.Vector3(20, 16, 30), lookAt: new THREE.Vector3(0, 5, 0) },
+    { pos: new THREE.Vector3(22, 24, 34), lookAt: new THREE.Vector3(0, 13, 0) },
   ];
   const cfgIdx = activeDim >= 7 ? 2 : activeDim >= 4 ? 1 : 0;
   const targetPos = configs[cfgIdx].pos;
@@ -85,7 +85,12 @@ function CameraRig({ activeDim }: { activeDim: number }) {
   useEffect(() => {
     if (cfgIdx !== prevCfgIdx.current) {
       prevCfgIdx.current = cfgIdx;
+      // Start from current camera position, but also sync current OrbitControls target
       smoothPos.current.copy(camera.position);
+      const controls = get().controls as any;
+      if (controls?.target) {
+        smoothLookAt.current.copy(controls.target);
+      }
       isAnimating.current = true;
     }
   }, [cfgIdx]);
@@ -94,16 +99,28 @@ function CameraRig({ activeDim }: { activeDim: number }) {
     if (!isAnimating.current) return;
     const dt = Math.min(delta, 0.05);
     const k = 1 - Math.pow(0.5, dt / 0.75);
+
     smoothPos.current.lerp(targetPos, k);
     smoothLookAt.current.lerp(targetLookAt, k);
+
+    // Update camera position
     camera.position.copy(smoothPos.current);
-    camera.lookAt(smoothLookAt.current);
     camera.updateProjectionMatrix();
-    if (
+
+    // Critically: keep OrbitControls.target in sync with our lookAt
+    // This prevents the "snap" when the user first touches the mouse
+    const controls = get().controls as any;
+    if (controls?.target) {
+      controls.target.copy(smoothLookAt.current);
+      controls.update();
+    } else {
+      camera.lookAt(smoothLookAt.current);
+    }
+
+    const done =
       smoothPos.current.distanceTo(targetPos) < 0.005 &&
-      smoothLookAt.current.distanceTo(targetLookAt) < 0.005
-    )
-      isAnimating.current = false;
+      smoothLookAt.current.distanceTo(targetLookAt) < 0.005;
+    if (done) isAnimating.current = false;
   });
   return null;
 }
