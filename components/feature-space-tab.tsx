@@ -918,7 +918,7 @@ export default function FeatureSpaceTab({
     : [];
 
   const [activeIdx, setActiveIdx] = useState(0);
-  const [activeDim, setActiveDim] = useState(7);
+  const [activeDim, setActiveDim] = useState(3);
   const [simExpanded, setSimExpanded] = useState(false);
   const safeActive = Math.min(activeIdx, points.length - 1);
   useEffect(() => {
@@ -959,9 +959,14 @@ export default function FeatureSpaceTab({
         {/* Left panel */}
         <div className="flex flex-col gap-2 w-52 overflow-y-auto overflow-x-hidden shrink-0">
           <div className="shrink-0">
-            <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground block mb-2">
-              维度 (1D–7D)
-            </span>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
+                维度 (1D–7D)
+              </span>
+              <span className="text-[9px] text-muted-foreground/60">
+                点击数字升/降维
+              </span>
+            </div>
             <div className="flex gap-1">
               {[1, 2, 3, 4, 5, 6, 7].map((dim) => (
                 <button
