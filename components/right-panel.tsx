@@ -189,14 +189,14 @@ export default function RightPanel({
                 className="flex-1 flex items-center gap-1.5 text-xs"
               >
                 <BarChart3 className="h-3.5 w-3.5" />
-                特征向量详情
+                Feature Vector Details
               </TabsTrigger>
               <TabsTrigger
                 value="dimreduction"
                 className="flex-1 flex items-center gap-1.5 text-xs"
               >
                 <Box className="h-3.5 w-3.5" />
-                空间中的特征向量
+                Feature Vector in Geometric Space
               </TabsTrigger>
             </TabsList>
 
@@ -244,11 +244,11 @@ export default function RightPanel({
                           image={image}
                           featureVector={image.features[currentFeatureType]}
                         />
-                        <div className="mt-2 md:mt-4">
+                        {/*<div className="mt-2 md:mt-4">
                           <ColorHistogramChart
                             featureVector={image.features[currentFeatureType]}
                           />
-                        </div>
+                        </div>*/}
                       </div>
                     );
                   })}

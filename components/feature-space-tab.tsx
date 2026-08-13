@@ -311,7 +311,7 @@ function Space2Axes({
                 whiteSpace: "nowrap",
               }}
             >
-              色相 · f4
+              Hue · f4
             </div>
           </Html>
         </>
@@ -342,7 +342,7 @@ function Space2Axes({
                 whiteSpace: "nowrap",
               }}
             >
-              大小 · f5
+              Size · f5
             </div>
           </Html>
         </>
@@ -373,7 +373,7 @@ function Space2Axes({
                 whiteSpace: "nowrap",
               }}
             >
-              透明 · f6
+              Opacity · f6
             </div>
           </Html>
         </>
@@ -449,7 +449,7 @@ function Space3Axis({
             whiteSpace: "nowrap",
           }}
         >
-          形状 · f7
+          Shape · f7
         </div>
       </Html>
       <mesh>
@@ -604,7 +604,7 @@ function MultiSpacePoint({
     activeDim >= 2 ? vals.f2 : 0,
   );
   // Space 2: each axis activated independently by its own progress
-  // p4 drives X (f4/色相), p5 drives Z (f5/大小), p6 drives Y (f6/透明)
+  // p4 drives X (f4 / hue), p5 drives Z (f5 / size), p6 drives Y (f6 / opacity)
   const s2local = toSpace2(vals);
   const s2yBase = lerp(0, 10, emerge2); // floor of space2 rises with emerge2
   const pos2 = new THREE.Vector3(
@@ -956,35 +956,35 @@ export default function FeatureSpaceTab({
 
   const spaceHint =
     activeDim >= 7
-      ? "空间1→平面 · 空间2→平面 · 空间3展开"
+      ? "Space 1 → plane · Space 2 → plane · Space 3 expanded"
       : activeDim >= 4
-        ? "空间1→平面 · 空间2展开"
-        : "空间1三维展开";
+        ? "Space 1 → plane · Space 2 expanded"
+        : "Space 1 fully expanded (3D)";
 
   return (
-    <div className="h-full flex flex-col gap-2 overflow-hidden w-full">
+    <div className="h-full flex flex-col gap-3 overflow-hidden w-full">
       <div className="shrink-0">
-        <p className="text-xs font-semibold text-foreground">
-          特征空间降维演示
+        <p className="text-sm font-semibold text-foreground">
+          Feature Space Dimensionality Reduction Demo
         </p>
-        <p className="text-[10px] text-muted-foreground">
-          {activeDim} 个维度 · {spaceHint}
+        <p className="text-[11px] text-muted-foreground mt-0.5">
+          {activeDim} dimensions · {spaceHint}
         </p>
       </div>
 
-      <div className="flex gap-2 flex-1 min-h-0">
+      <div className="flex gap-3 flex-1 min-h-0">
         {/* Left panel */}
-        <div className="flex flex-col gap-2 w-52 overflow-y-auto overflow-x-hidden shrink-0">
+        <div className="flex flex-col gap-3 w-72 overflow-y-auto overflow-x-hidden shrink-0">
           <div className="shrink-0">
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex flex-col gap-0.5 mb-2.5">
               <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">
-                维度 (1D–7D)
+                Dimensions (1D–7D)
               </span>
-              <span className="text-[9px] text-muted-foreground/60">
-                点击数字升/降维
+              <span className="text-[10px] text-muted-foreground/60">
+                Click a number to increase or decrease dimensions
               </span>
             </div>
-            <div className="flex gap-1">
+            <div className="flex gap-1.5">
               {[1, 2, 3, 4, 5, 6, 7].map((dim) => (
                 <button
                   key={dim}
@@ -995,28 +995,26 @@ export default function FeatureSpaceTab({
                 </button>
               ))}
             </div>
-            <div className="flex mt-1.5 rounded-md overflow-hidden border border-border text-[8px] font-mono select-none">
+            <div className="grid grid-cols-3 gap-1.5 mt-3 text-[9px] font-mono select-none">
               {[
                 {
-                  label: "空间 1",
-                  cols: 3,
+                  label: "Space 1",
                   bg: "#f0f9ff",
                   colors: [FC.f1, FC.f2, FC.f3],
                 },
                 {
-                  label: "空间 2",
-                  cols: 3,
+                  label: "Space 2",
                   bg: "#fefce8",
                   colors: [FC.f4, FC.f5, FC.f6],
                 },
-                { label: "空间3", cols: 1, bg: "#fdf4ff", colors: [FC.f7] },
+                { label: "Space 3", bg: "#fdf4ff", colors: [FC.f7] },
               ].map((g, gi) => (
                 <div
                   key={gi}
-                  className="flex flex-col items-center py-1 gap-0.5"
-                  style={{ flex: g.cols, background: g.bg }}
+                  className="flex flex-col items-center justify-center py-2 px-1 gap-1 rounded-md border border-border/50"
+                  style={{ background: g.bg }}
                 >
-                  <div className="flex gap-0.5">
+                  <div className="flex gap-1">
                     {g.colors.map((c, ci) => (
                       <div
                         key={ci}
@@ -1028,27 +1026,29 @@ export default function FeatureSpaceTab({
                       />
                     ))}
                   </div>
-                  <span className="text-muted-foreground leading-none">
+                  <span className="text-muted-foreground leading-none whitespace-nowrap">
                     {g.label}
                   </span>
                 </div>
               ))}
             </div>
-            {activeDim >= 4 && (
-              <div className="mt-1.5 px-2 py-1 rounded-md bg-amber-50 border border-amber-200 text-[9px] text-amber-700 leading-relaxed">
-                空间1已折叠为平面，成为空间2的底层基底
-              </div>
-            )}
-            {activeDim >= 7 && (
-              <div className="mt-1 px-2 py-1 rounded-md bg-purple-50 border border-purple-200 text-[9px] text-purple-700 leading-relaxed">
-                空间2已折叠为平面，成为空间3的底层基底
-              </div>
-            )}
+            <div className="flex flex-col gap-2 mt-3">
+              {activeDim >= 4 && (
+                <div className="px-2.5 py-1.5 rounded-md bg-amber-50 border border-amber-200 text-[10px] text-amber-700 leading-relaxed">
+                  Space 1 has collapsed into a plane, becoming the base layer of Space 2
+                </div>
+              )}
+              {activeDim >= 7 && (
+                <div className="px-2.5 py-1.5 rounded-md bg-purple-50 border border-purple-200 text-[10px] text-purple-700 leading-relaxed">
+                  Space 2 has collapsed into a plane, becoming the base layer of Space 3
+                </div>
+              )}
+            </div>
           </div>
 
-          <div className="shrink-0">
+          <div className="shrink-0 mt-1">
             <span className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground block mb-2">
-              数据点 ({points.length})
+              Data Points ({points.length})
             </span>
             <div className="space-y-1.5">
               {points.map((pt, i) => {
@@ -1157,13 +1157,13 @@ export default function FeatureSpaceTab({
                           if (activeDim < 2) lost.push(`Z(${v.f2.toFixed(1)})`);
                           if (activeDim < 3) lost.push(`Y(${v.f3.toFixed(1)})`);
                           if (activeDim < 4)
-                            lost.push(`色相(${v.f4.toFixed(0)}°)`);
+                            lost.push(`Hue(${v.f4.toFixed(0)}°)`);
                           if (activeDim < 5)
-                            lost.push(`大小(${v.f5.toFixed(2)})`);
+                            lost.push(`Size(${v.f5.toFixed(2)})`);
                           if (activeDim < 6)
-                            lost.push(`透明(${v.f6.toFixed(2)})`);
+                            lost.push(`Opacity(${v.f6.toFixed(2)})`);
                           if (activeDim < 7)
-                            lost.push(`形状(${v.f7.toFixed(2)})`);
+                            lost.push(`Shape(${v.f7.toFixed(2)})`);
                           return lost.length > 0 ? (
                             <div
                               className="mt-1.5 rounded-md px-2 py-1.5 text-[9px]"
@@ -1176,10 +1176,10 @@ export default function FeatureSpaceTab({
                                 className="font-bold mb-0.5"
                                 style={{ color: pt.color }}
                               >
-                                👻 高维原貌
+                                👻 High-Dimensional Original
                               </div>
                               <div className="text-muted-foreground">
-                                丢失: {lost.join(" · ")}
+                                Lost: {lost.join(" · ")}
                               </div>
                             </div>
                           ) : null;
@@ -1198,7 +1198,7 @@ export default function FeatureSpaceTab({
                             color: pt.color,
                           }}
                         >
-                          <span>📐 相似度距离</span>
+                          <span>📐 Similarity Distance</span>
                           <span>{simExpanded ? "▲" : "▼"}</span>
                         </div>
                         {simExpanded &&
@@ -1287,7 +1287,7 @@ export default function FeatureSpaceTab({
                                         <div>
                                           <div className="flex justify-between">
                                             <span className="text-muted-foreground">
-                                              余弦
+                                              Cosine
                                             </span>
                                             <span className="font-mono text-foreground">
                                               {isNaN(cos)
@@ -1300,7 +1300,7 @@ export default function FeatureSpaceTab({
                                         <div>
                                           <div className="flex justify-between">
                                             <span className="text-muted-foreground">
-                                              欧式
+                                              Euclidean
                                             </span>
                                             <span className="font-mono text-foreground">
                                               {isNaN(euc)
@@ -1313,7 +1313,7 @@ export default function FeatureSpaceTab({
                                         <div>
                                           <div className="flex justify-between">
                                             <span className="text-muted-foreground">
-                                              曼哈顿
+                                              Manhattan
                                             </span>
                                             <span className="font-mono text-foreground">
                                               {isNaN(man)
@@ -1345,10 +1345,10 @@ export default function FeatureSpaceTab({
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center px-8">
               <div className="text-4xl opacity-30">🌐</div>
               <p className="text-sm font-semibold text-muted-foreground">
-                请先在左侧选择图片
+                Please select an image on the left first
               </p>
               <p className="text-xs text-muted-foreground/70">
-                选择图片后，其特征向量将被映射到几何空间中展示
+                Once an image is selected, its feature vector will be mapped and displayed in geometric space
               </p>
             </div>
           )}
@@ -1368,28 +1368,28 @@ export default function FeatureSpaceTab({
               </Canvas>
               <div className="absolute top-3 right-3 bg-background/80 backdrop-blur-md rounded-lg px-3 py-1.5 text-right shadow-md border border-border">
                 <div className="font-mono text-[10px] text-muted-foreground mb-0.5">
-                  当前保留维度
+                  Current Retained Dimensions
                 </div>
                 <div className="font-mono text-2xl font-black text-foreground leading-none">
                   {activeDim}
                   <span className="text-sm font-normal text-muted-foreground ml-1">
-                    维
+                    D
                   </span>
                 </div>
               </div>
               <div className="absolute bottom-3 left-3 flex flex-col gap-1">
                 {[
                   {
-                    label: "空间1: f1-f3 主XZY",
+                    label: "Space 1: f1-f3 (X, Z, Y)",
                     colors: [FC.f1, FC.f2, FC.f3],
                     minDim: 1,
                   },
                   {
-                    label: "空间2: f4-f6 ↑展开",
+                    label: "Space 2: f4-f6 ↑ expanded",
                     colors: [FC.f4, FC.f5, FC.f6],
                     minDim: 4,
                   },
-                  { label: "空间3: f7 ↑↑展开", colors: [FC.f7], minDim: 7 },
+                  { label: "Space 3: f7 ↑↑ expanded", colors: [FC.f7], minDim: 7 },
                 ]
                   .filter((g) => activeDim >= g.minDim)
                   .map((g) => (

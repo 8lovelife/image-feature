@@ -7,9 +7,10 @@ import * as THREE from "three";
 import { Slider } from "@/components/ui/slider";
 
 // ─────────────────────────────────────────────────────────────
-// 7维坐标系：
-//   空间特征：特1(X), 特2(Z), 特3(Y, 降维压到0)
-//   物理特征：特4(颜色/色相), 特5(大小), 特6(透明度), 特7(形状 - 现已支持无极调整，纯数字展示)
+// 7D coordinate system:
+//   Spatial features: F1 (X), F2 (Z), F3 (Y, collapsed to 0 when reduced)
+//   Physical features: F4 (color/hue), F5 (size), F6 (opacity),
+//                       F7 (shape - now supports continuous adjustment, shown as a plain number)
 // ─────────────────────────────────────────────────────────────
 
 const easeIO = (t: number) =>
@@ -20,13 +21,14 @@ const C = {
   f1: "#f43f5e", // X
   f2: "#22d3ee", // Z
   f3: "#a78bfa", // Y
-  f4: "#fbbf24", // 颜色
-  f5: "#4ade80", // 大小
-  f6: "#60a5fa", // 透明度
-  f7: "#f472b6", // 形状
+  f4: "#fbbf24", // color
+  f5: "#4ade80", // size
+  f6: "#60a5fa", // opacity
+  f7: "#f472b6", // shape
 };
 
-// 摄像机运镜：基于特3(Y轴)的坍缩进度，控制从3D视角平滑过渡到2D俯视角
+// Camera path: driven by the collapse progress of F3 (Y-axis),
+// smoothly transitions the camera from a 3D perspective to a 2D top-down view
 function camAt(p: number): [number, number, number] {
   if (p <= 0) return [10, 8, 10];
   if (p < 0.3) {
@@ -84,7 +86,7 @@ function CoordAxes({ progresses }: { progresses: number[] }) {
 
   return (
     <group>
-      {/* X 轴 */}
+      {/* X axis */}
       <Line
         points={[
           [-LEN, 0, 0],
@@ -120,12 +122,12 @@ function CoordAxes({ progresses }: { progresses: number[] }) {
               opacity: 0.85,
             }}
           >
-            特征1
+            Feature 1
           </div>
         </div>
       </Html>
 
-      {/* Z 轴 */}
+      {/* Z axis */}
       {zs > 0.015 && (
         <>
           <Line
@@ -163,14 +165,14 @@ function CoordAxes({ progresses }: { progresses: number[] }) {
                   opacity: 0.85,
                 }}
               >
-                特征2
+                Feature 2
               </div>
             </div>
           </Html>
         </>
       )}
 
-      {/* Y 轴 */}
+      {/* Y axis */}
       {ys > 0.015 && (
         <>
           <Line
@@ -214,14 +216,14 @@ function CoordAxes({ progresses }: { progresses: number[] }) {
                   opacity: 0.85,
                 }}
               >
-                特征3
+                Feature 3
               </div>
             </div>
           </Html>
         </>
       )}
 
-      {/* 原点 */}
+      {/* Origin */}
       <mesh>
         <sphereGeometry args={[0.08, 16, 16]} />
         <meshBasicMaterial color="#fff" />
@@ -234,7 +236,7 @@ function Floor() {
   return <gridHelper args={[12, 24, "#1e293b", "#1e293b"]} />;
 }
 
-// ─── 物理特征的子坐标系映射 (特4 - 特7) ──────────────────────────────
+// ─── Sub-coordinate mapping for physical features (F4 - F7) ──────────────
 function SubCoordinates({ f4, f5, f6, f7, progresses }: any) {
   const pColor = progresses[3];
   const pSize = progresses[4];
@@ -252,10 +254,10 @@ function SubCoordinates({ f4, f5, f6, f7, progresses }: any) {
   const d7 = new THREE.Vector3(1, -1, -1).normalize();
 
   const axes = [
-    { id: "f4", len: l4, dir: d4, color: C.f4, label: "特4(色)" },
-    { id: "f5", len: l5, dir: d5, color: C.f5, label: "特5(大)" },
-    { id: "f6", len: l6, dir: d6, color: C.f6, label: "特6(透)" },
-    { id: "f7", len: l7, dir: d7, color: C.f7, label: "特7(形)" },
+    { id: "f4", len: l4, dir: d4, color: C.f4, label: "F4 (color)" },
+    { id: "f5", len: l5, dir: d5, color: C.f5, label: "F5 (size)" },
+    { id: "f6", len: l6, dir: d6, color: C.f6, label: "F6 (opacity)" },
+    { id: "f7", len: l7, dir: d7, color: C.f7, label: "F7 (shape)" },
   ];
 
   return (
@@ -311,7 +313,7 @@ function SubCoordinates({ f4, f5, f6, f7, progresses }: any) {
   );
 }
 
-// ─── 7维数据点：利用透明度交叉溶解实现无极形变 ──────────────
+// ─── 7D data point: uses cross-fading opacity for continuous morphing ──────────────
 function DataPoint({ f1, f2, f3, f4, f5, f6, f7, progresses }: any) {
   const posGroupRef = useRef<THREE.Group>(null);
   const meshRefs = useRef<THREE.Mesh[]>([]);
@@ -325,33 +327,33 @@ function DataPoint({ f1, f2, f3, f4, f5, f6, f7, progresses }: any) {
     const pOpacity = progresses[5];
     const pShape = progresses[6];
 
-    // 1. 空间坍缩
+    // 1. Spatial collapse
     const curZ = f2 * (1 - pZ);
     const curY = f3 * (1 - pY);
     if (posGroupRef.current) {
       posGroupRef.current.position.set(f1, curY, curZ);
     }
 
-    // 2. 物理大小坍缩与视觉压扁
+    // 2. Physical size collapse and visual flattening
     const curSize = lerp(f5, 0.22, pSize);
     const sq = Math.max(0.05, 1 - pY * 0.95);
     const sx = curSize * (1 + (1 - sq) * 0.3);
     const sy = curSize * sq;
     const sz = curSize * (1 + (1 - sq) * 0.3);
 
-    // 3. 颜色与透明度坍缩
+    // 3. Color and opacity collapse
     const targetColor = new THREE.Color().setHSL(f4 / 360, 1.0, 0.5);
     const grayColor = new THREE.Color("#888888");
     const curColor = targetColor.lerp(grayColor, pColor);
     const curOpacity = lerp(f6, 1.0, pOpacity);
 
-    // 4. 形状无极调整与坍缩计算 (将连续的形状维度拉回至基态 0)
+    // 4. Continuous shape adjustment and collapse (pulls the continuous shape dimension back to base state 0)
     const curF7 = f7 * (1 - pShape);
     const idx1 = Math.floor(curF7);
     const idx2 = Math.min(3, Math.ceil(curF7));
     const t = curF7 - idx1;
 
-    // 动态分配四种形态的显示权重
+    // Dynamically distribute the display weight across the four shapes
     for (let i = 0; i < 4; i++) {
       if (meshRefs.current[i] && matRefs.current[i]) {
         let o = 0;
@@ -370,7 +372,7 @@ function DataPoint({ f1, f2, f3, f4, f5, f6, f7, progresses }: any) {
         mat.transparent = mat.opacity < 1.0;
 
         const mesh = meshRefs.current[i];
-        mesh.visible = o > 0.001; // 剔除完全透明的物体提升性能
+        mesh.visible = o > 0.001; // Cull fully transparent objects to improve performance
         if (mesh.visible) {
           mesh.scale.set(sx, sy, sz);
         }
@@ -387,7 +389,7 @@ function DataPoint({ f1, f2, f3, f4, f5, f6, f7, progresses }: any) {
 
   return (
     <group ref={posGroupRef}>
-      {/* 渲染完整的4种几何体，用透明度实现无缝交叉溶解 */}
+      {/* Render all 4 geometries and use opacity for seamless cross-fading */}
       <group>
         {shapes.map((geom, i) => (
           <mesh key={i} ref={(el) => (meshRefs.current[i] = el as THREE.Mesh)}>
@@ -408,7 +410,7 @@ function DataPoint({ f1, f2, f3, f4, f5, f6, f7, progresses }: any) {
   );
 }
 
-// ─── 幽灵点：支持双重线框来表示中间浮点状态 ──────────────────────────────
+// ─── Ghost point: uses a double wireframe to represent intermediate/fractional state ──────────────────────────────
 function GhostPoint({ f1, f2, f3, f4, f5, f6, f7, progresses }: any) {
   const ghost1Ref = useRef<THREE.Mesh>(null);
   const ghost2Ref = useRef<THREE.Mesh>(null);
@@ -499,7 +501,7 @@ function GhostPoint({ f1, f2, f3, f4, f5, f6, f7, progresses }: any) {
             }}
           >
             <div style={{ fontSize: 11, color: C.f4, fontWeight: 700 }}>
-              高维原貌 (幽灵)
+              High-Dimensional Original (Ghost)
             </div>
             <div
               style={{
@@ -509,36 +511,36 @@ function GhostPoint({ f1, f2, f3, f4, f5, f6, f7, progresses }: any) {
                 lineHeight: 1.4,
               }}
             >
-              丢失特征:
+              Lost features:
               {progresses[2] > 0.5 && (
                 <span>
                   {" "}
-                  <br />• Y高度({f3.toFixed(1)})
+                  <br />• Y height ({f3.toFixed(1)})
                 </span>
               )}
               {progresses[3] > 0.5 && (
                 <span>
                   {" "}
-                  <br />• 颜色(色相{f4.toFixed(0)}°)
+                  <br />• Color (hue {f4.toFixed(0)}°)
                 </span>
               )}
               {progresses[4] > 0.5 && (
                 <span>
                   {" "}
-                  <br />• 尺寸({f5.toFixed(2)})
+                  <br />• Size ({f5.toFixed(2)})
                 </span>
               )}
               {progresses[5] > 0.5 && (
                 <span>
                   {" "}
-                  <br />• 透明度({f6.toFixed(2)})
+                  <br />• Opacity ({f6.toFixed(2)})
                 </span>
               )}
               {progresses[6] > 0.5 && (
                 <span>
                   {" "}
-                  {/* 这里改成了数字展示 */}
-                  <br />• 形状({f7.toFixed(2)})
+                  {/* Shown as a plain number */}
+                  <br />• Shape ({f7.toFixed(2)})
                 </span>
               )}
             </div>
@@ -636,7 +638,7 @@ function Scene({ f1, f2, f3, f4, f5, f6, f7, progresses, isAnimating }: any) {
   );
 }
 
-// ─── 通用滑块组件 ────────────────────────────────────────────────────
+// ─── Generic slider component ────────────────────────────────────────────────────
 function FSlider({
   label,
   sub,
@@ -711,7 +713,7 @@ function FSlider({
   );
 }
 
-// ─── 主组件 ──────────────────────────────────────────────────
+// ─── Main component ──────────────────────────────────────────────────
 export default function FeatureSpaceDemo() {
   const [f1, setF1] = useState(2.5);
   const [f2, setF2] = useState(2);
@@ -719,7 +721,7 @@ export default function FeatureSpaceDemo() {
   const [f4, setF4] = useState(45);
   const [f5, setF5] = useState(0.45);
   const [f6, setF6] = useState(0.85);
-  // 默认给一个1.5的值，以便第一眼就能看到无极调整的混合效果
+  // Default to 1.5 so the continuous-blend effect is visible at a glance
   const [f7, setF7] = useState(1.5);
 
   const [activeDim, setActiveDim] = useState<number>(7);
@@ -764,10 +766,10 @@ export default function FeatureSpaceDemo() {
         <div className="flex items-center justify-between shrink-0">
           <div>
             <h1 className="text-xl font-bold text-white">
-              7维特征空间降维演示
+              7D Feature Space Dimensionality Reduction Demo
             </h1>
             <p className="text-xs text-slate-500 mt-0.5">
-              逐级剥离物理与空间特征，观察高维数据的坍缩
+              Strip away physical and spatial features one dimension at a time and watch high-dimensional data collapse
             </p>
           </div>
           <div className="flex items-center gap-1.5 bg-[#12151f] border border-slate-700/80 rounded-xl px-4 py-2 font-mono text-sm shadow-xl">
@@ -799,7 +801,7 @@ export default function FeatureSpaceDemo() {
               {f6.toFixed(2)}
             </span>
             <span className="text-slate-600">,</span>
-            {/* 【修改点】顶栏直接展示数字 */}
+            {/* Display the plain number directly in the top bar */}
             <span style={{ color: C.f7, opacity: 1 - progresses[6] * 0.75 }}>
               {(f7 * (1 - progresses[6])).toFixed(2)}
             </span>
@@ -811,7 +813,7 @@ export default function FeatureSpaceDemo() {
           <div className="flex flex-col gap-3 w-80 overflow-y-auto pr-2 custom-scrollbar shrink-0">
             <div className="bg-[#12151f] border border-slate-700/60 rounded-2xl p-4 shrink-0">
               <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-500 block mb-3">
-                当前维度 (1D - 7D)
+                Current Dimension (1D - 7D)
               </span>
               <div className="flex gap-1.5">
                 {[1, 2, 3, 4, 5, 6, 7].map((dim) => (
@@ -834,27 +836,27 @@ export default function FeatureSpaceDemo() {
 
             <div className="bg-[#12151f] border border-slate-700/60 rounded-2xl p-4 space-y-5 shrink-0">
               <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">
-                特征参数 (1-7)
+                Feature Parameters (1-7)
               </span>
               <FSlider
-                label="特1"
-                sub="X轴/左右"
+                label="F1"
+                sub="X-axis / left-right"
                 color={C.f1}
                 value={f1}
                 onChange={setF1}
                 disabled={false}
               />
               <FSlider
-                label="特2"
-                sub="Z轴/前后"
+                label="F2"
+                sub="Z-axis / front-back"
                 color={C.f2}
                 value={f2}
                 onChange={setF2}
                 disabled={activeDim < 2}
               />
               <FSlider
-                label="特3"
-                sub="Y轴/高低"
+                label="F3"
+                sub="Y-axis / up-down"
                 color={C.f3}
                 value={f3}
                 onChange={setF3}
@@ -862,8 +864,8 @@ export default function FeatureSpaceDemo() {
               />
               <div className="border-t border-slate-700/50" />
               <FSlider
-                label="特4"
-                sub="色相"
+                label="F4"
+                sub="Hue"
                 color={C.f4}
                 value={f4}
                 onChange={setF4}
@@ -876,8 +878,8 @@ export default function FeatureSpaceDemo() {
                 disabled={activeDim < 4}
               />
               <FSlider
-                label="特5"
-                sub="大小/半径"
+                label="F5"
+                sub="Size / radius"
                 color={C.f5}
                 value={f5}
                 onChange={setF5}
@@ -889,8 +891,8 @@ export default function FeatureSpaceDemo() {
                 disabled={activeDim < 5}
               />
               <FSlider
-                label="特6"
-                sub="透明度"
+                label="F6"
+                sub="Opacity"
                 color={C.f6}
                 value={f6}
                 onChange={setF6}
@@ -901,10 +903,10 @@ export default function FeatureSpaceDemo() {
                 marks={{ min: "0.1", max: "1.0" }}
                 disabled={activeDim < 6}
               />
-              {/* 【修改点】配置纯数字格式输出 */}
+              {/* Configured to output a plain number */}
               <FSlider
-                label="特7"
-                sub="几何形状"
+                label="F7"
+                sub="Geometric shape"
                 color={C.f7}
                 value={f7}
                 onChange={setF7}
@@ -941,15 +943,15 @@ export default function FeatureSpaceDemo() {
                 />
               </Canvas>
 
-              {/* 图例和信息展示保持原样 ... */}
+              {/* Legend and info display kept as-is ... */}
               <div className="absolute top-4 right-4 bg-black/60 backdrop-blur-md rounded-xl px-4 py-2.5 text-right shadow-lg border border-slate-700/50 transition-all">
                 <div className="font-mono text-[10px] text-slate-400 mb-0.5">
-                  当前保留状态
+                  Current Retained State
                 </div>
                 <div className="font-mono text-3xl font-black text-white leading-none">
                   {activeDim}
                   <span className="text-base font-normal text-slate-400 ml-1">
-                    维
+                    D
                   </span>
                 </div>
               </div>
@@ -959,18 +961,18 @@ export default function FeatureSpaceDemo() {
               {[
                 {
                   icon: "🧬",
-                  title: "特征 = 维度",
-                  body: "在这个空间里，不仅仅是XYZ坐标，颜色、大小、透明度和形状都可以是独立的特征，共同构成了高维向量。",
+                  title: "Feature = Dimension",
+                  body: "In this space, it's not just XYZ coordinates — color, size, opacity, and shape can each be independent features, together forming a high-dimensional vector.",
                 },
                 {
                   icon: "🗜️",
-                  title: "降维 = 抹杀个性",
-                  body: "当你逐级点击降维按钮时，可以看到对应特征被强制洗成标准基态。最终所有点变得毫无差异。",
+                  title: "Reduction = Erasing Identity",
+                  body: "As you click through the reduction levels, you can see the corresponding features get forced back to a standard base state. Eventually all points become indistinguishable.",
                 },
                 {
                   icon: "👻",
-                  title: "幽灵点与信息丢失",
-                  body: "降维后留下的幽灵线框，代表了由于维度限制而被永久抛弃的“特征差异”。相同投影点的高维原貌可能天差地别。",
+                  title: "Ghost Points & Information Loss",
+                  body: "The ghost wireframe left behind after reduction represents the \"feature differences\" permanently discarded due to dimensional constraints. Points that share the same projection can look wildly different in their original high-dimensional form.",
                 },
               ].map((card) => (
                 <div
